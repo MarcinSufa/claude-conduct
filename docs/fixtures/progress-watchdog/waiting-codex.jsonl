@@ -1,0 +1,14 @@
+{"type":"thread.started","thread_id":"01a0-fixture"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Brief: push branch fix/cache-key, open the PR and get CI green, then report the PR URL. Pushed and opened PR #48; waiting for CI."}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"gh pr view 48 --json url -q .url","aggregated_output":"https://github.com/acme/app/pull/48\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"sleep 60 && gh pr checks 48","aggregated_output":"build\tpending\t0\thttps://github.com/acme/app/actions/runs/1\ntest\tpending\t0\thttps://github.com/acme/app/actions/runs/1\n","exit_code":8,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_4","type":"command_execution","command":"sleep 60 && gh pr checks 48","aggregated_output":"build\tpending\t0\thttps://github.com/acme/app/actions/runs/1\ntest\tpending\t0\thttps://github.com/acme/app/actions/runs/1\n","exit_code":8,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_5","type":"command_execution","command":"sleep 60 && gh pr checks 48","aggregated_output":"build\tpending\t0\thttps://github.com/acme/app/actions/runs/1\ntest\tpending\t0\thttps://github.com/acme/app/actions/runs/1\n","exit_code":8,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_6","type":"agent_message","text":"Checks still pending. Waiting another minute."}}
+{"type":"item.completed","item":{"id":"item_7","type":"command_execution","command":"sleep 60 && gh pr checks 48","aggregated_output":"build\tpending\t0\thttps://github.com/acme/app/actions/runs/1\ntest\tpending\t0\thttps://github.com/acme/app/actions/runs/1\n","exit_code":8,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_8","type":"command_execution","command":"sleep 60 && gh pr checks 48","aggregated_output":"build\tpending\t0\thttps://github.com/acme/app/actions/runs/1\ntest\tpending\t0\thttps://github.com/acme/app/actions/runs/1\n","exit_code":8,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_9","type":"command_execution","command":"sleep 60 && gh pr checks 48","aggregated_output":"build\tpending\t0\thttps://github.com/acme/app/actions/runs/1\ntest\tpending\t0\thttps://github.com/acme/app/actions/runs/1\n","exit_code":8,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_10","type":"agent_message","text":"Checks still pending. Waiting another minute."}}
+{"type":"item.completed","item":{"id":"item_11","type":"command_execution","command":"sleep 60 && gh pr checks 48","aggregated_output":"build\tpending\t0\thttps://github.com/acme/app/actions/runs/1\ntest\tpending\t0\thttps://github.com/acme/app/actions/runs/1\n","exit_code":8,"status":"completed"}}
+{"type":"turn.completed","usage":{"input_tokens":90000,"cached_input_tokens":80000,"output_tokens":900}}

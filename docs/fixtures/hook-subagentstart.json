@@ -1,0 +1,10 @@
+{
+  "session_id": "12345678-1234-4abc-8def-1234567890ab",
+  "transcript_path": "<HOME>\\.claude\\projects\\<HOME_SLUG>-projects-claude-conduct\\12345678-1234-4abc-8def-1234567890ab.jsonl",
+  "cwd": "C:\\tmp",
+  "scratchpad_dir": "<HOME>\\AppData\\Local\\Temp\\claude\\<HOME_SLUG>-projects-claude-conduct\\12345678-1234-4abc-8def-1234567890ab\\scratchpad",
+  "prompt_id": "23456789-2345-4bcd-8efa-2345678901bc",
+  "agent_id": "ac3cad74be8cb150c",
+  "agent_type": "general-purpose",
+  "hook_event_name": "SubagentStart"
+}

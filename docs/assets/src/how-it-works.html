@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>conduct how it works</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+  .frame { position: relative; width: 2000px; height: 1300px; border-radius: 56px; overflow: hidden; background: var(--bg); }
+  .top { position: absolute; left: 100px; right: 100px; top: 78px; display: flex; align-items: center; justify-content: space-between; }
+  .brand { display: flex; align-items: center; gap: 22px; font: 700 54px/1 var(--sans); letter-spacing: -1.5px; color: var(--ink); }
+  .tag { font: 400 30px/1 var(--mono); letter-spacing: 6px; color: var(--muted); }
+  h1 { position: absolute; left: 96px; top: 168px; margin: 0; font: 900 92px/1 var(--display); letter-spacing: -3px; color: var(--ink); }
+  h1 em { font-style: normal; color: var(--accent); }
+  .row { position: absolute; left: 100px; right: 100px; top: 318px; display: flex; justify-content: space-between; font: 400 27px/1 var(--mono); letter-spacing: 4px; color: var(--ink); }
+  .row b { font-weight: 400; color: var(--accent); }
+  .card { position: absolute; box-sizing: border-box; padding: 28px 24px 22px; border-radius: 20px; background: linear-gradient(var(--card-a), var(--card-b)); border: 2px solid var(--card-hot-edge); box-shadow: 12px 14px 0 var(--card-side); }
+  .card::before { content: ''; position: absolute; left: 26px; right: 26px; top: -2px; height: 5px; border-radius: 3px; background: var(--accent); }
+  .card.you { border-color: var(--ink); }
+  .card.you::before { background: var(--ink); }
+  .card .who { font: 700 18px/1 var(--mono); letter-spacing: 1px; white-space: nowrap; color: var(--accent); }
+  .card.you .who { color: var(--ink); }
+  .card .t { margin-top: 18px; font: 800 42px/1 var(--sans); color: var(--ink); letter-spacing: -1px; }
+  .card .t span { font: 700 26px/1 var(--mono); color: var(--muted); margin-right: 12px; letter-spacing: 0; vertical-align: 6px; }
+  .card .d { margin-top: 14px; font: 400 24px/1.3 var(--sans); color: var(--muted); }
+  .foot { position: absolute; left: 100px; right: 100px; bottom: 60px; display: flex; justify-content: space-between; font: 400 22px/1 var(--mono); letter-spacing: 3px; color: var(--dim-ink); }
+  svg.wires { position: absolute; left: 0; top: 0; overflow: visible; }
+</style>
+</head>
+<body>
+<div class="frame" id="frame">
+  <div class="top">
+    <div class="brand"><svg width="64" height="52" viewBox="0 0 64 52"><path d="M12 26 L52 8 M12 26 L52 26 M12 26 L52 44" stroke="var(--accent)" stroke-width="5" stroke-linecap="round" fill="none"/><circle cx="12" cy="26" r="10" fill="var(--accent)"/><circle cx="52" cy="8" r="6" fill="var(--ink)"/><circle cx="52" cy="26" r="6" fill="var(--ink)"/><circle cx="52" cy="44" r="6" fill="var(--ink)"/></svg>conduct</div>
+    <div class="tag">HOW IT WORKS · ONE SLICE</div>
+  </div>
+  <h1>Every slice runs <em>the same loop.</em></h1>
+  <div class="row"><span>EXAMPLE TEAM · ANY VENDOR CAN TAKE A ROLE</span><b>THE BUILDER NEVER CHECKS ITS OWN WORK</b></div>
+  <svg class="wires" id="wires" width="2000" height="1300"></svg>
+</div>
+<script>
+const theme = new URLSearchParams(location.search).get('theme') || 'dark';
+document.documentElement.dataset.theme = theme;
+</script>
+<script>
+const frame = document.getElementById('frame');
+const X0 = 84, W = 264, GAP = 114, ROW = [430, 820], H = 250;
+const boxes = {};
+function card(id, slot, row, who, t, d, you) {
+  const x = X0 + slot * (W + GAP), y = ROW[row];
+  const el = document.createElement('div');
+  el.className = 'card' + (you ? ' you' : '');
+  Object.assign(el.style, { left: x + 'px', top: y + 'px', width: W + 'px', height: H + 'px' });
+  el.innerHTML = `<div class="who">${who}</div><div class="t">${t}</div><div class="d">${d}</div>`;
+  frame.appendChild(el);
+  boxes[id] = { x, y, w: W, h: H };
+}
+card('brief', 0, 0, '01 · OPUS 5.5', 'Brief', 'task, scope, open choices');
+card('wt', 1, 0, '02 · OPUS 5.5', 'Worktree', 'one per slice, off main');
+card('opin', 2, 0, '03 · LUNA + GROK', 'Opinions', 'two vendors, independently');
+card('fuse', 3, 0, '04 · OPUS 5.5', 'Fuse', 'one decision, divergence logged');
+card('gate', 4, 0, '05 · GROK', 'Gate', 'test written first, seen red');
+card('build', 4, 1, '06 · GPT LUNA', 'Build', 'in the worktree until green');
+card('review', 3, 1, '07 · GROK', 'Review', 'cross-vendor check of the diff');
+card('judge', 2, 1, '08 · OPUS 5.5', 'Adjudicate', 'rules on findings, routes fixes');
+card('hand', 1, 1, '09 · OPUS 5.5', 'Hand off', 'whole-branch review, PR to you');
+card('close', 0, 1, '10 · OPUS + YOU', 'Close', 'ledger, preflight, teardown; you merge', true);
+
+let svg = `<defs><marker id="ah" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1 L8 5 L1 9" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>`;
+const line = (d, dashed) => { svg += `<path d="${d}" fill="none" stroke="var(--accent)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" ${dashed ? 'stroke-dasharray="3 13"' : ''} marker-end="url(#ah)"/>`; };
+const pill = (cx, cy, t) => {
+  const w = t.length * 11.2 + 18;
+  svg += `<rect x="${cx - w / 2}" y="${cy - 17}" width="${w}" height="34" rx="17" fill="var(--accent)"/><text x="${cx}" y="${cy + 6.5}" text-anchor="middle" style="font-family:var(--mono);font-weight:700;font-size:17px;letter-spacing:0.03em;fill:var(--pill-ink)">${t}</text>`;
+};
+function link(a, b, label) {
+  const A = boxes[a], B = boxes[b];
+  const y = A.y + H / 2 + 34;
+  const forward = B.x > A.x;
+  const x1 = forward ? A.x + W + 14 : A.x - 8, x2 = forward ? B.x - 10 : B.x + W + 22;
+  line(`M${x1} ${y} L${x2} ${y}`);
+  if (label) pill((x1 + x2) / 2 + (forward ? -2 : 6), y - 44, label);
+}
+link('brief', 'wt', '');
+link('wt', 'opin', 'BRIEF');
+link('opin', 'fuse', 'VIEWS');
+link('fuse', 'gate', 'PLAN');
+link('build', 'review', 'DIFF');
+link('review', 'judge', 'FINDINGS');
+link('judge', 'hand', 'CLEAN');
+link('hand', 'close', 'PR');
+{
+  const A = boxes.gate, B = boxes.build, x = A.x + W + 40, r = 22;
+  const y1 = A.y + H / 2 + 34, y2 = B.y + H / 2 + 34;
+  line(`M${A.x + W + 14} ${y1} L${x - r} ${y1} Q${x} ${y1} ${x} ${y1 + r} L${x} ${y2 - r} Q${x} ${y2} ${x - r} ${y2} L${B.x + W + 22} ${y2}`);
+  pill(x, (y1 + y2) / 2, 'GATE');
+}
+{
+  const A = boxes.judge, B = boxes.build, yb = A.y + H + 70, r = 30;
+  const xa = A.x + W / 2, xb = B.x + W / 2;
+  line(`M${xa} ${A.y + H + 16} L${xa} ${yb - r} Q${xa} ${yb} ${xa + r} ${yb} L${xb - r} ${yb} Q${xb} ${yb} ${xb} ${yb - r} L${xb} ${B.y + H + 26}`, true);
+  pill((xa + xb) / 2, yb, 'FIXES');
+}
+document.getElementById('wires').innerHTML = svg;
+
+const foot = document.createElement('div');
+foot.className = 'foot';
+foot.innerHTML = '<span>TRIVIAL SLICES MAY SKIP 03 TO 05, AND RECORD IT</span><span>OPUS CONDUCTS · LUNA BUILDS · GROK CHECKS</span>';
+frame.appendChild(foot);
+</script>
+</body>
+</html>

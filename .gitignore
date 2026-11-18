@@ -1,0 +1,4 @@
+.conduct/
+.claude/handoff/
+.claude/
+*.stackdump

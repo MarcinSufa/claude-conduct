@@ -1,0 +1,30 @@
+:root {
+  --sans: 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+  --display: 'Segoe UI Black', 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
+  --mono: 'Cascadia Mono', 'Cascadia Code', Consolas, monospace;
+}
+html, body { margin: 0; background: transparent; }
+[data-theme='dark'] {
+  --bg: #0f1113; --glow: rgba(45, 212, 191, 0.10);
+  --ink: #f2f1ec; --muted: #9a9ea6; --accent: #2dd4bf; --pill-ink: #062421;
+  --slab-top: #1b1f23; --slab-top-far: #15181b; --slab-front: #121417; --slab-side: #0c0e10; --slab-edge: #2b3137;
+  --grid: rgba(255,255,255,0.045); --wt: rgba(45,212,191,0.07); --wt-edge: rgba(45,212,191,0.35);
+  --track: #262b31; --track-dim: #3a4048;
+  --ped-top: #2a2f35; --ped-hot: #1d3a37; --ped-side: #16191c; --ped-edge: #444b54;
+  --socket-top: #16191c; --socket-side: #111316; --dim-ink: #6b717a; --ghost-fill: rgba(255,255,255,0.02);
+  --card-top: #2c3238; --card-a: #23282d; --card-b: #1a1e22; --card-side: #0b0d0f; --card-edge: #39404a; --card-hot-edge: #3d4a4e;
+  --gate-front: #2a3036; --gate-side: #1a1e22; --gate-top: #3a4148; --gate-glow: rgba(45,212,191,0.16);
+  --lane-line: #23272c; --lane-band: rgba(255,255,255,0.018); --pk-front: #1fa595; --pk-side: #147a6f;
+}
+[data-theme='light'] {
+  --bg: #f5f4ef; --glow: rgba(13, 148, 136, 0.10);
+  --ink: #15171a; --muted: #5d636b; --accent: #0d9488; --pill-ink: #ffffff;
+  --slab-top: #ffffff; --slab-top-far: #f0efe9; --slab-front: #e2e0d8; --slab-side: #d3d0c6; --slab-edge: #cfccc2;
+  --grid: rgba(0,0,0,0.05); --wt: rgba(13,148,136,0.07); --wt-edge: rgba(13,148,136,0.45);
+  --track: #dedbd2; --track-dim: #c9c6bc;
+  --ped-top: #ffffff; --ped-hot: #e3f4f1; --ped-side: #d9d6cd; --ped-edge: #bdb9ae;
+  --socket-top: #f3f2ed; --socket-side: #e2e0d8; --dim-ink: #8f949a; --ghost-fill: rgba(255,255,255,0.5);
+  --card-top: #fbfaf7; --card-a: #ffffff; --card-b: #f7f6f2; --card-side: #d6d3ca; --card-edge: #d4d1c7; --card-hot-edge: #b9d9d4;
+  --gate-front: #e6e3db; --gate-side: #cfccc3; --gate-top: #ffffff; --gate-glow: rgba(13,148,136,0.14);
+  --lane-line: #e2dfd6; --lane-band: rgba(0,0,0,0.018); --pk-front: #0b7f75; --pk-side: #08635b;
+}

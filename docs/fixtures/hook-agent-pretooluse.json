@@ -1,0 +1,21 @@
+{
+  "session_id": "12345678-1234-4abc-8def-1234567890ab",
+  "transcript_path": "<HOME>\\.claude\\projects\\<HOME_SLUG>-projects-claude-conduct\\12345678-1234-4abc-8def-1234567890ab.jsonl",
+  "cwd": "C:\\tmp",
+  "scratchpad_dir": "<HOME>\\AppData\\Local\\Temp\\claude\\<HOME_SLUG>-projects-claude-conduct\\12345678-1234-4abc-8def-1234567890ab\\scratchpad",
+  "prompt_id": "23456789-2345-4bcd-8efa-2345678901bc",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "<REDACTED>",
+    "prompt": "<REDACTED>",
+    "subagent_type": "general-purpose",
+    "model": "haiku",
+    "run_in_background": true
+  },
+  "tool_use_id": "toolu_017T2dKFHoYfDYwuGMDoyGq6"
+}

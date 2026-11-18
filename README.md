@@ -66,21 +66,6 @@ cp -R examples/conduct-binding "$HOME/.claude/skills/conduct-binding"
 
 Edit `~/.claude/skills/conduct-binding/SKILL.md` for your tools. The example is outside `skills/` because the installer copies every directory in `skills/`.
 
-## Install Superpowers
-
-Inside a Claude Code session, install the required Superpowers plugin:
-
-```text
-/plugin install superpowers@claude-plugins-official
-```
-
-Alternatively, add the marketplace and install from it:
-
-```text
-/plugin marketplace add obra/superpowers-marketplace
-/plugin install superpowers@superpowers-marketplace
-```
-
 ## Try it
 
 In Claude Code, type:
@@ -126,8 +111,7 @@ The doctrine in `/conduct` is portable. A binding supplies only environment-spec
 
 - Claude Code is required to load and use the skill.
 - Node.js is required for the helper scripts and tests.
-- Conduct uses the Superpowers plugin skills `superpowers:subagent-driven-development` and `superpowers:dispatching-parallel-agents` as its execution engine for Claude workers. See [Install Superpowers](#install-superpowers) for the install command.
-- Minimal setup is Claude Code + Superpowers with Claude subagents as workers. With Claude alone, cross-vendor review cannot be satisfied: [the skill says](skills/conduct/SKILL.md#cross-vendor-independence-rule), "Claude-on-Claude does not satisfy independence," and the close preflight requires review coverage with no skip accepted.
+- Minimal setup is Claude Code with Claude subagents as workers. Cross-vendor review still requires another vendor: [the skill says](skills/conduct/SKILL.md#cross-vendor-independence-rule), "Claude-on-Claude does not satisfy independence," and the close preflight requires review coverage with no skip accepted.
 - Codex, Grok, and other CLIs can provide the required cross-vendor legs.
 - Git worktrees are used to isolate implementation slices.
 

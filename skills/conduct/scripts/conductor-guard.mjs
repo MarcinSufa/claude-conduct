@@ -337,7 +337,7 @@ const ADVICE =
   "The conduct Iron Rule: the conductor never implements, and this session runs with the conductor guard. " +
   "Do not retry the same change through another tool or shell trick. Instead: write the change as a brief " +
   "(.conduct/brief-<slice>.md) and dispatch a worker - an external CLI worker (codex/grok/cursor or a repo worker script) " +
-  "or an Agent/Task subagent (SDD); subagents are not guarded. The conductor may write .md/.json/.jsonl/.patch under .conduct/ " +
+  "or an Agent/Task subagent (Claude worker); subagents are not guarded. The conductor may write .md/.json/.jsonl/.patch under .conduct/ " +
   "and .md/.txt under briefs/, specs/, plans/, docs/ (plus $CONDUCT_BRIEF_DIR).";
 
 // Returns { deny: reason } or { allow: true } for one PreToolUse payload. Shadow vs enforce is the caller's call.

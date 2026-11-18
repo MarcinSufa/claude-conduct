@@ -5,7 +5,7 @@
 The Iron Rule ("the conductor never implements") is a prompt rule in `SKILL.md`. Starting the conductor through
 `scripts/conductor.sh` turns it into a structural rule: the session gets `skills/conduct/settings/conductor-settings.json`,
 whose PreToolUse hook (`skills/conduct/scripts/conductor-guard.mjs`, Node, no dependencies) blocks the main thread from
-writing code. Subagents stay unguarded, because SDD subagents are the workers.
+writing code. Subagents stay unguarded, because Claude subagents are the workers.
 
 ```bash
 scripts/conductor.sh                               # interactive; every claude argument passes through
@@ -33,7 +33,7 @@ The block message tells the model to write a brief and dispatch a worker.
 **Subagents:** Claude Code sets `agent_id` in hook input only inside a subagent (`agent_type` alone marks the main
 thread of an `--agent` session, which stays guarded). The guard passes any call with `agent_id`. This is also why
 the settings carry no `permissions.deny`: deny rules bind subagents too (verified on 2.1.292: a denied `Edit` is
-"disabled for this session, in subagents as well as here"), which would disarm the SDD workers.
+"disabled for this session, in subagents as well as here"), which would disarm the Claude workers.
 
 **Known escapes (the Bash part is a heuristic, not a sandbox):** running a script or package task that writes
 (`npm run fix`, `make`, `node tools/gen.mjs`); `git checkout/restore/reset/stash/merge` rewriting files; `sed`'s `w`

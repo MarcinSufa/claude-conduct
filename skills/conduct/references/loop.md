@@ -29,9 +29,9 @@ where `taskId` matches the step name in the list below.
    write the Decision now, then emit `--type decision.recorded` with a JSON payload file
    containing `{memoryId, ticketId?, phase: "fusion"}`.
 5. **Gate**: cross-vendor author writes the executable gate from the spec; verify it FAILS (taskId: gate).
-6. **Implement**: route per the table (SDD for Claude workers, `codex exec` cross-vendor) (taskId: implement).
+6. **Implement**: route per the table (see Claude workers in SKILL.md for Claude, `codex exec` cross-vendor) (taskId: implement).
    Worker cannot edit the gate. Worker runs the gate to green.
-7. **Per-task review** as SDD prescribes, then **≥1 cross-vendor review leg per implementer
+7. **Per-task review** per Claude workers in SKILL.md for Claude implementations, then **≥1 cross-vendor review leg per implementer
    family** (see Cross-vendor independence rule) (taskId: review). Write the patch FIRST with
    `--diff-patch` and hand it to the leg (see Fusion); stamp its `diff-sha256` header into the
    leg file the vendor returns, plus `review-scope: full` (or, for a narrow re-review after a

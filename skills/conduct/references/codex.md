@@ -11,7 +11,7 @@ Read this before dispatching a Luna or Sol leg (`codex exec`), for either implem
   **Stdin MUST be closed** or the run hangs on "Reading additional input from stdin...".
   **Never spawn codex from an Electron main process or any long-lived app** - documented native
   spawn-crash history on this machine; shell only.
-- Feed it the same task-brief file the SDD workers use. Capture BOTH: the verdict with
+- Feed it the same task-brief file the Claude workers use. Capture BOTH: the verdict with
   `--output-last-message .conduct/<vendor>-<slice>.md` (read it whole) AND the event stream with
   `--json > .conduct/<vendor>-<slice>.jsonl` (never read it as the verdict; conduct-events parses
   it for usage, program 2 for spans). Both flags together are verified on codex 0.144 (still listed

@@ -19,9 +19,12 @@ This is a *working model*, not a per-task speed optimization. Its payoff is a cl
 context, vendor-independent verification, and a repeatable routing discipline - not shaving minutes
 off one small edit. Judge it over the program, not the task.
 
-**REQUIRED SUB-SKILL:** superpowers:subagent-driven-development is the execution engine for
-Claude-family workers - `/conduct` routes it, it does not replace SDD's per-task review discipline.
-For independent parallel tasks, use superpowers:dispatching-parallel-agents (worktree isolation).
+## Claude workers
+
+- Dispatch a Claude worker (Agent/Task subagent) with the task brief file and slice worktree path. Send coupled or sequential tasks to one worker, one task at a time, in that worktree; send genuinely independent tasks in parallel, one worktree per worker (`isolation: "worktree"` or a conductor-created worktree).
+- The worker implements, cannot edit the gate, runs the gate to green, commits in its worktree, and reports changes and gate output.
+- For each task, fresh Claude subagents (never the implementer or conductor reading code) first review spec compliance against the brief for missing or extra behavior, then review code quality. Send findings to the same worker and repeat until both pass.
+- This per-task Claude review does not replace the cross-vendor review leg.
 
 **Paths:** `${CLAUDE_SKILL_DIR}` is this skill's directory (the one holding this SKILL.md and
 `scripts/`). The references/*.md files use the same placeholder unexpanded: substitute that directory.
@@ -64,8 +67,8 @@ yourself and delegating only the hard part is the exact failure this rule forbid
 | Rationalization (seen in the wild) | Reality |
 |---|---|
 | "It's a few small files - delegating is theater, overhead > the work." | The payoff isn't per-task speed; it's clean context + vendor-independent review + a repeatable pipeline. Route it. |
-| "The work is sequential and coupled; subagents only help when parallel." | SDD dispatches coupled tasks sequentially to ONE worker in the slice worktree - coherent diff, no cross-contamination, and you keep the conductor role. Coupling is not a license to implement. |
-| "Parallel agents in one tree cross-contaminate commits." | True - so coupled work goes to one sequential worker (SDD), and genuinely-parallel work gets one worktree per worker (dispatching-parallel-agents). Neither is a reason to do it yourself. |
+| "The work is sequential and coupled; subagents only help when parallel." | The Claude worker protocol dispatches coupled tasks sequentially to ONE worker in the slice worktree - coherent diff, no cross-contamination, and you keep the conductor role. Coupling is not a license to implement. |
+| "Parallel agents in one tree cross-contaminate commits." | True - so coupled work goes to one sequential worker, and genuinely parallel work gets one worktree per worker (see Claude workers). Neither is a reason to do it yourself. |
 | "I already hold the context; a subagent would just re-derive it." | Then put that context in the task brief. Briefing IS the conductor's job - it's not overhead, it's the work. |
 | "I'll do steps 0-4 myself and delegate only the review." | Doing 0-4 is implementing. The review-only split is the signature failure. |
 | "Recon/grep isn't implementation." | Read-only recon to write a brief is allowed. The instant you Edit/Write code or tests, you've broken role. |
@@ -150,8 +153,8 @@ Lifecycle, skip rules, event hooks, and casting races: references/loop.md.
 3. **Opinion**: if a memory sink is bound, query it for a prior decision on the same question first; a found decision skips or supersedes the stage. Otherwise, two vendors in parallel, read-only; mandatory when non-trivial.
 4. **Fusion**: write consensus / divergence / discarded / decision (with its `<rule> -> <choice>` lines, see Rule index) and freeze the spec; if a memory sink is bound, write the Decision and emit `--type decision.recorded` with a JSON payload file containing `{memoryId, ticketId?, phase: "fusion"}`.
 5. **Gate**: cross-vendor author writes the executable gate from the spec; verify it FAILS.
-6. **Implement**: route per the table (SDD for Claude workers, `codex exec` cross-vendor); worker cannot edit the gate and runs it to green.
-7. **Per-task review** as SDD prescribes, then **≥1 cross-vendor review leg per implementer family** on the real `--diff-patch`.
+6. **Implement**: route per the table (see Claude workers for Claude, `codex exec` cross-vendor); worker cannot edit the gate and runs it to green.
+7. **Per-task review** per Claude workers for Claude implementations, then **≥1 cross-vendor review leg per implementer family** on the real `--diff-patch`.
 8. **Adjudicate** into the fusion doc + route fixes: never fix yourself; emit `--type review.verdict` per adjudicated leg.
 9. **Opus whole-branch review**, then hand the PR to the operator to merge (they hold authority), with the slice's `<rule> -> <choice>` lines.
 10. **Close**: append the ledger row, run `preflight-close.mjs` BEFORE merging, then run Slice teardown in its fixed order.

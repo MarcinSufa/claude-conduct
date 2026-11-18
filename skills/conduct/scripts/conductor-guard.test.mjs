@@ -184,6 +184,6 @@ test("settings file wires the guard for every write-capable tool and has no perm
   const [entry] = s.hooks.PreToolUse;
   assert.deepEqual(entry.matcher.split("|").sort(), ["Bash", "Edit", "MultiEdit", "NotebookEdit", "Write"]);
   assert.match(entry.hooks[0].command, /conductor-guard\.mjs/);
-  // permissions.deny would also bind subagents (the SDD workers); see docs/conductor-guard.md.
+  // permissions.deny would also bind subagents (the Claude workers); see docs/conductor-guard.md.
   assert.equal(s.permissions, undefined);
 });

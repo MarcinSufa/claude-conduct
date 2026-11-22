@@ -79,6 +79,13 @@ It writes an acceptance gate before implementation, then dispatches a worker to 
 The worker runs against the gate; an independent vendor reviews the patch.
 You review the result and decide whether to merge it.
 
+## step-runner and exoloop
+
+Exoloop is the separate multi-task runner backed by ExoVault; it is unchanged.
+Step-runner runs one task's step loop, such as a conduct slice or `@start` stage 3.
+Dispatch-guard keeps codex and grok dispatch inside a step-runner run.
+See the [step-runner guide](docs/step-runner.md) for workflows and setup.
+
 ## How it works
 
 <p align="center">

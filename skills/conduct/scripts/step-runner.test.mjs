@@ -795,6 +795,27 @@ test("resuming after a gate keeps the pre-gate events in run.ndjson", (t) => {
   assert.equal(log.at(-1).status, "success");
 });
 
+test("a resumed run numbers retried attempts 1, 2, 3 and their step logs without gaps", (t) => {
+  const c = setup(t);
+  const env = { CONDUCT_RUN_ID: "rid-renumber" };
+  const wf = c.wf([c.agent(), c.check("pass"), { id: "ship", type: "gate" }, c.agent({ id: "fix" }),
+    c.check("fail", { id: "post", onFail: { retry: "fix", max: 2, retryOn: [1] } })]);
+  assert.equal(c.run(wf, [], { env, log: false }).status, 3);
+  c.run(wf, ["--from", "ship", "--approved", "Marcin: ok"], { env, log: false });
+  const runDir = path.join(c.home, "runs", "rid-renumber");
+  const attempts = events(readLog(path.join(runDir, "run.ndjson")), "attempt");
+  for (const id of ["fix", "post"]) assert.deepEqual(attempts.filter((e) => e.step === id).map((e) => e.n), [1, 2, 3], `${id} attempt numbers`);
+  assert.deepEqual(readdirSync(runDir).filter((f) => /^post-\d+\.log$/.test(f)).sort(), ["post-1.log", "post-2.log", "post-3.log"]);
+});
+
+test("an agent promptFile that is a directory exits 2 before any step runs", (t) => {
+  const c = setup(t);
+  const dir = path.join(c.root, "prompts"); mkdirSync(dir);
+  const r = c.run(c.wf([c.check("pass", { id: "pre" }), c.agent({ prompt: undefined, promptFile: dir }), c.check()]));
+  assertRejected(c, r, "promptFile");
+  assert.deepEqual(events(r.log, "attempt"), []);
+});
+
 test("--from naming a step that is not a gate with --repo exits 2 before creating a worktree or a run log", (t) => {
   const c = setup(t);
   const { repo, git } = initRepo(c, { "a.txt": "a\n" });

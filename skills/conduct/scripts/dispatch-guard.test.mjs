@@ -222,14 +222,24 @@ test("a variable holding a harmless command stays allowed through eval", () => {
   assertAllow(bash('CMD="ls"; eval "$CMD"'), 'CMD="ls"; eval "$CMD"');
 });
 
-const STDIN_CODE_DENY = [
+const STDIN_INTERPRETER_CODE = [
   heredoc("python3 -", 'import subprocess\nsubprocess.run(["codex","exec","x"])'),
   heredoc("node --input-type=module", 'import { spawnSync } from "node:child_process";\nspawnSync("codex", ["exec","x"]);'),
   `python3 <<< 'import os; os.system("grok -p x")'`,
 ];
 
-test("interpreter code read from a heredoc or here-string is denied when it mentions codex or grok", () => {
-  for (const c of STDIN_CODE_DENY) assertDeny(bash(c), c);
+// A replay of 139.7k real commands found 529 python/node heredocs that edit text naming codex and none that start it.
+test("interpreter code on stdin is the documented ceiling, like a script on disk, while shell code on stdin is still inspected", () => {
+  for (const c of [...STDIN_INTERPRETER_CODE, heredoc("python3 -", "s=open('README.md').read().replace('codex exec -m x', 'codex exec -m y')")]) assertAllow(bash(c), c);
+  assertDeny(bash(heredoc("bash", "codex exec x")), "bash heredoc");
+});
+
+test("a dynamic word whose value only names codex inside a path or a sentence stays allowed", () => {
+  for (const c of [
+    "S=/tmp/claude-1001/-home-agent-work-exo-vault-codex/pad; $S/merge-level.sh a b",
+    "G=/tmp/x-codex/gitleaks; $G git --log-opts=x",
+    't=$(( $(date +%s) - 1 )); [ $t -lt 0 ] && t=0; sleep $t; echo "codex limit should be reset"',
+  ]) assertAllow(bash(c), c);
 });
 
 test("harmless interpreter stdin code and a reader heredoc that mentions codex stay allowed", () => {

@@ -284,3 +284,27 @@ test("arithmetic beside a codex loop word or an exempt grok call is not a substi
   ]) assertAllow(bash(c), c);
   for (const c of DYNAMIC_WORD_DENY) assertDeny(bash(c), c);
 });
+
+test("a codex or grok path behind an unresolved variable is still a dispatch", () => {
+  for (const c of ["$HOME/.local/bin/codex exec x", '"$NVM_BIN/codex" exec x', '"$PWD/node_modules/.bin/grok" -p x']) assertDeny(bash(c), c);
+  assertAllow(bash("$HOME/.local/bin/codex --version"), "$HOME/.local/bin/codex --version");
+});
+
+test("-c inside any short flag cluster or before other flags runs the first operand as code", () => {
+  for (const c of [
+    "bash -cl 'codex exec x'", "bash -cx 'codex exec x'", "bash -c -l 'codex exec x'", "bash -c -- 'codex exec x'",
+    "bash -o pipefail -c 'codex exec x'", "bash --rcfile f -c 'codex exec x'",
+  ]) assertDeny(bash(c), c);
+  for (const c of ["bash -cl 'ls -la'", "bash -x ./codex-notes.sh", "bash --norc -c 'pwd'"]) assertAllow(bash(c), c);
+});
+
+test("npm and bun commands other than exec, x and bun x that name codex stay allowed", () => {
+  for (const c of ["npm install -g @openai/codex", "npm view @openai/codex version", "bun add -g @openai/codex", "npm test -- --grep codex"]) assertAllow(bash(c), c);
+});
+
+test("a 70k-character line of substitutions is decided well inside the hook timeout", () => {
+  const c = "`true`;".repeat(10_000) + "bash -lc 'codex exec x'";
+  const start = Date.now();
+  assertDeny(bash(c), "10k backticks then bash -lc");
+  assert.ok(Date.now() - start < 5_000, `took ${Date.now() - start} ms`);
+});

@@ -202,8 +202,8 @@ import { renameSync, writeFileSync } from "node:fs";
 const [mode, pidFile] = process.argv.slice(2);
 const writePid = (pid) => { writeFileSync(pidFile + ".tmp", String(pid)); renameSync(pidFile + ".tmp", pidFile); };
 if (mode === "hang") { writePid(process.pid); setTimeout(() => {}, 30_000); }
-else if (mode === "background") {
-  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], { stdio: "inherit" });
+else if (mode === "background" || mode === "detached") {
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], { stdio: "inherit", detached: mode === "detached" });
   writePid(child.pid); child.unref(); process.stdout.write("started\\n");
 }
 `;
@@ -747,6 +747,19 @@ test("a check that exits 0 leaving a background child on its stdout passes at on
     await until(() => !pidAlive(pid), 3000);
     assert.equal(pidAlive(pid), false, `background child ${pid} still running after the step`);
   }
+});
+
+test("POSIX: a check that exits 0 inside its timeout while a setsid descendant holds stdout is a pass, not a timeout", POSIX_ONLY, (t) => {
+  const c = setup(t);
+  const h = helper(c);
+  const { argv } = h.argv("detached", "det");
+  const t0 = Date.now();
+  const r = c.run({ steps: [{ id: "check", type: "check", argv, timeoutSec: 1 }] });
+  const ms = Date.now() - t0;
+  const [att] = events(r.log, "attempt");
+  assert.deepEqual([att?.exit, att?.outcome], [0, "pass"], `the check attempt is a pass, not a timeout (${JSON.stringify(att)})`);
+  assert.equal(r.result.status, "success");
+  assert.ok(ms < 6000, `the run took ${ms} ms; the runner must not wait for the escaped descendant`);
 });
 
 // ---------- check out of reach: relative argv[0] ----------

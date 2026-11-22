@@ -109,7 +109,11 @@ function inspectWords(inputWords, depth, raw = "", vars = new Map(), stdin = [],
         break;
       }
       if (["-o", "-O", "--rcfile", "--init-file"].includes(arg)) { i++; continue; }
-      if (/^-[A-Za-z]+$/.test(arg)) { if (arg.includes("c")) commandFlag = true; continue; }
+      if (/^[-+][A-Za-z]+$/.test(arg)) {
+        if (arg.startsWith("-") && arg.includes("c")) commandFlag = true;
+        if (arg.includes("o") || arg.includes("O")) i++;
+        continue;
+      }
       if (arg.startsWith("-")) continue;
       if (commandFlag) return inspect(expand(arg, vars), depth + 1);
       break;

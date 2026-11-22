@@ -65,13 +65,13 @@ Before each agent attempt, the runner hashes check executables it can resolve fr
 
 ## Dispatch guard
 
-`dispatch-guard.mjs` is an optional PreToolUse hook for Bash. It denies codex/grok dispatch outside a step-runner run, and denies dispatch from subagents. It is not installed by the runner or this repository change. To enable it by hand, add a `PreToolUse` hook with a `Bash` matcher in your `settings.json`, for example:
+`dispatch-guard.mjs` is an optional PreToolUse hook for Bash and Monitor. It denies codex/grok dispatch outside a step-runner run, and denies dispatch from subagents. It is not installed by the runner or this repository change. To enable it by hand, add a `PreToolUse` hook with a `Bash|Monitor` matcher in your `settings.json`, for example:
 
 ```json
 {
   "hooks": {
     "PreToolUse": [{
-      "matcher": "Bash",
+      "matcher": "Bash|Monitor",
       "hooks": [{
         "type": "command",
         "command": "node /absolute/path/to/skills/conduct/scripts/dispatch-guard.mjs"
@@ -81,4 +81,4 @@ Before each agent attempt, the runner hashes check executables it can resolve fr
 }
 ```
 
-The hook parses shell commands using the conductor guard's shell parser and prefix handling. Keep `CONDUCT_RUN_ID` in the hook process environment for permitted in-run dispatch. A `CONDUCT_RUN_ID=...` assignment written inside a Bash command does not enable it. Wrapper programs (the `RUNS_COMMAND` list) and `--` after them are followed; other commands that only mention codex or grok as an argument are allowed; scripts on disk, aliases and functions are not visible (PATH wrapper is the upgrade path).
+The hook parses shell commands using the conductor guard's shell parser and prefix handling. Keep `CONDUCT_RUN_ID` in the hook process environment for permitted in-run dispatch. A `CONDUCT_RUN_ID=...` assignment written inside a Bash command does not enable it. Wrapper programs (the `RUNS_COMMAND` list) and `--` after them are followed; other commands that only mention codex or grok as an argument are allowed. Scripts on disk and code an interpreter reads from a file or stdin are outside the inspection ceiling; only inline interpreter `-c`/`-e` code is inspected. Shell code read from stdin is still inspected. Aliases and functions are not visible (PATH wrapper is the upgrade path).

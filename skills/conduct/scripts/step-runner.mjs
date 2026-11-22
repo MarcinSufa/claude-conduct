@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, readdirSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -127,12 +127,12 @@ function runChild(argv, opts) {
     child.stdin?.on("error", () => {});
     opts.setChild?.(child);
     if (opts.stdin !== "none") child.stdin.end(opts.input);
-    timer = setTimeout(() => { timedOut = true; killTree(child, true); grace = setTimeout(() => finish(124), 2000); }, opts.timeoutSec * 1000);
+    timer = setTimeout(() => { timedOut = true; killTree(child, true); clearTimeout(grace); grace = setTimeout(() => finish(124), 2000); }, opts.timeoutSec * 1000);
     child.on("exit", (code) => {
       clearTimeout(timer);
       exitCode = code;
       if (process.platform !== "win32") killTree(child);
-      grace = setTimeout(() => finish(exitCode), 2000);
+      clearTimeout(grace); grace = setTimeout(() => finish(exitCode), 2000);
     });
     child.on("close", (code) => {
       if (process.platform !== "win32") killTree(child);
@@ -158,7 +158,7 @@ export async function runWorkflow(wf, options = {}) {
   const workflowPath = options.workflowPath ?? path.resolve("workflow.json");
   for (const s of wf.steps) if (s.type === "agent" && s.promptFile) {
     const promptPath = path.resolve(path.dirname(workflowPath), s.promptFile);
-    if (!existsSync(promptPath)) issue(`missing promptFile ${s.promptFile}`);
+    if (!existsSync(promptPath) || !statSync(promptPath).isFile()) issue(`missing promptFile ${s.promptFile}`);
   }
   const runId = process.env.CONDUCT_RUN_ID || randomUUID();
   const started = Date.now();
@@ -176,6 +176,12 @@ export async function runWorkflow(wf, options = {}) {
   mkdirSync(path.dirname(logFile), { recursive: true });
   if (!options.from) writeFileSync(logFile, "");
   const runs = Object.fromEntries(wf.steps.map((s) => [s.id, 0]));
+  const existingFiles = options.from && existsSync(runDir) ? readdirSync(runDir) : [];
+  const priorRuns = Object.fromEntries(wf.steps.map((step) => {
+    const pattern = new RegExp(`^${step.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-(\\d+)\\.(?:log|prompt\\.md)$`);
+    const prior = existingFiles.map((name) => pattern.exec(name)).filter(Boolean).reduce((max, match) => Math.max(max, Number(match[1])), 0);
+    return [step.id, prior];
+  }));
   const retries = Object.create(null), currentModel = Object.create(null), retryInfo = Object.create(null);
   for (const s of wf.steps) if (s.type === "agent") currentModel[s.id] = s.model;
   if (!options.from) event(logFile, runId, "start", { workflow: workflowPath, cwd, ...(worktree ? { worktree } : {}) });
@@ -192,10 +198,7 @@ export async function runWorkflow(wf, options = {}) {
       const resume = process.platform === "win32" ? `set "CONDUCT_RUN_ID=${runId}" && ${command}` : `CONDUCT_RUN_ID=${shellQuote(runId)} ${command}`;
       final = { status: "gate", step: step.id, resume, runs }; break;
     }
-    const existingFiles = options.from && existsSync(runDir) ? readdirSync(runDir) : [];
-    const pattern = new RegExp(`^${step.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-(\\d+)\\.(?:log|prompt\\.md)$`);
-    const prior = existingFiles.map((name) => pattern.exec(name)).filter(Boolean).reduce((max, match) => Math.max(max, Number(match[1])), 0);
-    const n = ++runs[step.id] + prior, begin = Date.now();
+    const n = ++runs[step.id] + priorRuns[step.id], begin = Date.now();
     const before = step.type === "agent" ? hashChecks(wf.steps, cwd) : null;
     const modelName = step.type === "agent" ? currentModel[step.id] : null;
     const model = modelName ? models[modelName] : null;

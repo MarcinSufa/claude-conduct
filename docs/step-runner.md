@@ -76,4 +76,4 @@ Before each agent attempt, the runner hashes check executables it can resolve fr
 }
 ```
 
-The hook parses shell commands using the conductor guard's shell parser and prefix handling. Keep `CONDUCT_RUN_ID` in the hook process environment for permitted in-run dispatch. A `CONDUCT_RUN_ID=...` assignment written inside a Bash command does not enable it.
+The hook parses shell commands using the conductor guard's shell parser and prefix handling. Keep `CONDUCT_RUN_ID` in the hook process environment for permitted in-run dispatch. A `CONDUCT_RUN_ID=...` assignment written inside a Bash command does not enable it. Wrapper programs (the `RUNS_COMMAND` list) and `--` after them are followed; other commands that only mention codex or grok as an argument are allowed; scripts on disk, aliases and functions are not visible (PATH wrapper is the upgrade path).

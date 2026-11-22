@@ -298,6 +298,14 @@ test("-c inside any short flag cluster or before other flags runs the first oper
   for (const c of ["bash -cl 'ls -la'", "bash -x ./codex-notes.sh", "bash --norc -c 'pwd'"]) assertAllow(bash(c), c);
 });
 
+test("option values after o or O in a cluster and + options do not end the -c scan", () => {
+  for (const c of [
+    "bash -euo pipefail -c 'codex exec x'", "timeout 60 bash -euo pipefail -c 'codex exec x'", "bash -lO extglob -c 'codex exec x'",
+    "bash +e -c 'codex exec x'", "bash +o pipefail -c 'codex exec x'", "bash -e +x -c 'codex exec x'",
+  ]) assertDeny(bash(c), c);
+  for (const c of ["bash -euo pipefail -c 'ls'", "bash -eo pipefail script.sh", "bash +x run.sh codex"]) assertAllow(bash(c), c);
+});
+
 test("npm and bun commands other than exec, x and bun x that name codex stay allowed", () => {
   for (const c of ["npm install -g @openai/codex", "npm view @openai/codex version", "bun add -g @openai/codex", "npm test -- --grep codex"]) assertAllow(bash(c), c);
 });

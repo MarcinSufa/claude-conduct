@@ -174,3 +174,78 @@ test("process lookups, flag values and loop variables that name codex or grok st
 test("a variable or tmux session that runs codex is denied", () => {
   for (const c of REPLAY_DENY) assertDeny(bash(c), c);
 });
+
+const monitor = (command, { env, extra } = {}) => hook(payload("Monitor", { command, description: "d", timeout_ms: 1000 }, extra), env);
+const heredoc = (head, body) => `${head} <<'X'\n${body}\nX`;
+
+const COMBINED_FLAG_DENY = [
+  "bash -lc 'codex exec x'", 'bash -ec "codex exec x"', "sh -euc 'grok -p x'", "bash -xc 'grok -p x'", "zsh -ic 'codex exec x'",
+  "nohup bash -lc 'codex exec x' > log 2>&1 &", `ssh host 'bash -lc "codex exec x"'`, `python3 -Bc "import os; os.system('codex exec x')"`,
+];
+
+test("shell and python -c combined with other short flags (-lc, -ec, -euc, -xc, -ic, -Bc) is inspected", () => {
+  for (const c of COMBINED_FLAG_DENY) assertDeny(bash(c), c);
+});
+
+test("combined shell flags with harmless code or a script file stay allowed", () => {
+  for (const c of ["bash -lc 'ls -la'", 'bash -ec "npm test"', "bash -l script.sh"]) assertAllow(bash(c), c);
+});
+
+test("a Monitor command that dispatches codex is denied like Bash, also for a subagent with CONDUCT_RUN_ID", () => {
+  assertDeny(monitor("codex exec x"), "Monitor codex");
+  assertDeny(monitor("codex exec x", { env: envWith(), extra: SUBAGENT }), "subagent Monitor codex with CONDUCT_RUN_ID");
+});
+
+test("a Monitor command is allowed when it does not dispatch, or on the main thread with CONDUCT_RUN_ID", () => {
+  assertAllow(monitor("tail -f log"), "Monitor tail");
+  assertAllow(monitor("codex exec x", { env: envWith() }), "Monitor codex with CONDUCT_RUN_ID");
+});
+
+const DYNAMIC_WORD_DENY = [
+  "$(which codex) exec x", '"$(command -v codex)" exec x', "`which codex` exec x",
+  "C=$(which codex); $C exec x", "export C=codex; $C exec x", '"${CODEX_BIN:-codex}" exec x',
+];
+
+test("a dynamic command word ($(...), backticks, $VAR, ${VAR:-...}) is denied when the command mentions codex or grok", () => {
+  for (const c of DYNAMIC_WORD_DENY) assertDeny(bash(c), c);
+});
+
+test("a dynamic command word without codex or grok, or a substitution outside command position, stays allowed", () => {
+  for (const c of ["$(which node) --version", '"$HOME/bin/tool" run', "echo $(which codex)"]) assertAllow(bash(c), c);
+});
+
+test("variables assigned earlier in the command reach eval and bash -c code", () => {
+  for (const c of ['CMD="codex exec x"; eval "$CMD"', 'CMD="codex exec x"; bash -c "$CMD"']) assertDeny(bash(c), c);
+});
+
+test("a variable holding a harmless command stays allowed through eval", () => {
+  assertAllow(bash('CMD="ls"; eval "$CMD"'), 'CMD="ls"; eval "$CMD"');
+});
+
+const STDIN_CODE_DENY = [
+  heredoc("python3 -", 'import subprocess\nsubprocess.run(["codex","exec","x"])'),
+  heredoc("node --input-type=module", 'import { spawnSync } from "node:child_process";\nspawnSync("codex", ["exec","x"]);'),
+  `python3 <<< 'import os; os.system("grok -p x")'`,
+];
+
+test("interpreter code read from a heredoc or here-string is denied when it mentions codex or grok", () => {
+  for (const c of STDIN_CODE_DENY) assertDeny(bash(c), c);
+});
+
+test("harmless interpreter stdin code and a reader heredoc that mentions codex stay allowed", () => {
+  for (const c of [heredoc("python3 -", "print(1)"), heredoc("cat", "codex exec x")]) assertAllow(bash(c), c);
+});
+
+const RUNNER_DENY = ["pueue add -- codex exec x", "npm exec codex -- exec x", "npm exec -- @openai/codex exec x", "npm x codex exec x", "bun x codex exec x"];
+
+test("pueue add, npm exec, npm x and bun x running codex are dispatches", () => {
+  for (const c of RUNNER_DENY) assertDeny(bash(c), c);
+});
+
+test("pnpm exec codex stays denied", () => {
+  assertDeny(bash("pnpm exec codex exec x"), "pnpm exec codex exec x");
+});
+
+test("runners that run something else, and codex --version through npm exec, stay allowed", () => {
+  for (const c of ["pueue add -- npm test", "npm exec prettier -- --check .", "npm x tsc", "npm exec codex -- --version"]) assertAllow(bash(c), c);
+});

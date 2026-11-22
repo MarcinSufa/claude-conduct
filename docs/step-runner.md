@@ -43,7 +43,7 @@ node skills/conduct/scripts/step-runner.mjs workflow.json [--repo DIR | --cwd DI
 
 `--repo` creates a detached worktree at `<os.tmpdir()>/conduct-runs/<runId>` from the repo's `HEAD`, runs steps there, and keeps it. `--cwd` uses the given directory without a worktree; by default the current directory is used. `CONDUCT_RUN_ID` supplies the run ID; otherwise the runner generates a UUID. Each child inherits it. A gate returns its `step` and complete `resume` command; rerun with `--from <gate-id> --approved "<who: text>"` to record approval and continue after that gate.
 
-Each step has a hard timeout. Timeout records exit 124 and outcome `timeout`. On POSIX the child runs in its own process group, which the runner kills after the step, including on success. On Windows, timeout uses `taskkill /pid <pid> /T /F`. Windows can only kill descendants while the root process is alive; a root that exits after leaving descendants can outlive cleanup. Windows Job Objects are the upgrade path.
+Each step has a hard timeout. Timeout records exit 124 and outcome `timeout`. On POSIX the child runs in its own process group, which the runner kills after the step, including on success. A descendant that calls `setsid` or double-forks can escape the group kill; cgroups or `PR_SET_CHILD_SUBREAPER` are the upgrade paths. On Windows, timeout uses `taskkill /pid <pid> /T /F`. Windows can only kill descendants while the root process is alive; a root that exits after leaving descendants can outlive cleanup. Windows Job Objects are the upgrade path. If stdio remains open after a kill or process exit, the runner destroys the streams after a two-second grace period.
 
 ## Log and exit codes
 

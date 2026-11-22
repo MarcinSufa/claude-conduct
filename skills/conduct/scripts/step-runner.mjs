@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,7 @@ const BUILT_INS = {
   grok: { argv: ["grok", "-m", "grok-4.6", "--prompt-file", "{promptFile}", "--cwd", "{cwd}", "--reasoning-effort", "{effort}", "--permission-mode", "bypassPermissions", "--max-turns", "80", "--output-format", "plain"], stdin: "none", effort: "high" },
 };
 const LIMIT = /usage limit|rate.?limit|quota|429|payment|billing|spending limit|insufficient credit|exceeded your/i;
-const issue = (s) => { throw new Error(s); };
+const issue = (s) => { const err = new Error(s); err.name = "WorkflowError"; throw err; };
 const isInt = (v) => Number.isInteger(v);
 const shellQuote = (v) => /^[A-Za-z0-9_./:=@%+-]+$/.test(String(v)) ? String(v) : process.platform === "win32" ? `"${String(v).replaceAll('"', '""')}"` : `'${String(v).replaceAll("'", "'\\''")}'`;
 
@@ -64,20 +64,22 @@ function event(logFile, runId, name, data = {}) {
   return e;
 }
 
-function hashChecks(steps) {
+function hashChecks(steps, cwd) {
   const hashes = new Map();
   for (const s of steps.filter((x) => x.type === "check" && x.argv)) {
-    const file = resolveExecutable(s.argv[0]);
+    const file = resolveExecutable(s.argv[0], cwd);
     if (file) hashes.set(s.id, { file, hash: createHash("sha256").update(readFileSync(file)).digest("hex") });
   }
   return hashes;
 }
 
-function resolveExecutable(exe) {
-  if (!exe || exe.includes("{ ")) return null;
-  const candidates = path.isAbsolute(exe) || exe.includes(path.sep) ? [path.resolve(exe)] :
-    (process.env.PATH ?? "").split(path.delimiter).map((p) => path.join(p, exe + (process.platform === "win32" && !path.extname(exe) ? ".exe" : "")));
-  return candidates.find((p) => { try { return existsSync(p) && readFileSync(p).length >= 0; } catch { return false; } }) ?? null;
+function resolveExecutable(exe, cwd = process.cwd()) {
+  if (!exe || exe.includes("{")) return null;
+  const extensions = process.platform === "win32" && !path.extname(exe) ? (process.env.PATHEXT || ".EXE;.CMD;.BAT").split(";") : [""];
+  const hasPath = exe.includes("/") || exe.includes("\\");
+  const dirs = path.isAbsolute(exe) || hasPath ? [path.resolve(cwd, exe)] :
+    (process.env.PATH ?? "").split(path.delimiter).flatMap((p) => extensions.map((ext) => path.join(p, exe + ext)));
+  return dirs.find((p) => { try { return existsSync(p) && readFileSync(p).length >= 0; } catch { return false; } }) ?? null;
 }
 
 function checksUnchanged(before) {
@@ -91,7 +93,7 @@ function checksUnchanged(before) {
 function killTree(child, force = false) {
   if (!child.pid) return;
   if (process.platform === "win32") {
-    // Windows can only kill descendants while the root process is still alive; Job Objects are the upgrade path.
+    // ponytail: Windows can only kill descendants while the root is alive; Job Objects are the upgrade path.
     spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
   } else {
     try { process.kill(-child.pid, "SIGKILL"); } catch { if (force) { try { child.kill("SIGKILL"); } catch {} } }
@@ -101,25 +103,40 @@ function killTree(child, force = false) {
 function runChild(argv, opts) {
   return new Promise((resolve) => {
     let command = argv[0], args = argv.slice(1);
+    if (process.platform === "win32" && !command.includes("/") && !command.includes("\\")) command = resolveExecutable(command, opts.cwd) ?? command;
     if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(command)) {
       const quote = (s) => `"${String(s).replace(/(\\*)"/g, "$1$1\\\"").replace(/\\+$/, "$&$&")}"`;
-      args = ["/d", "/s", "/c", [command, ...args].map(quote).join(" ")];
+      args = ["/d", "/s", "/c", `"${[command, ...args].map(quote).join(" ")}"`];
       command = process.env.ComSpec || "cmd.exe";
     }
+    const windowsVerbatimArguments = process.platform === "win32" && command === (process.env.ComSpec || "cmd.exe") || opts.windowsVerbatimArguments;
+    if (opts.signalCode?.()) { resolve({ exit: 1, output: "", timedOut: false, interrupted: true }); return; }
     const child = spawn(command, args, {
       cwd: opts.cwd, env: opts.env, stdio: [opts.stdin === "none" ? "ignore" : "pipe", "pipe", "pipe"],
-      detached: process.platform !== "win32", windowsHide: true,
+      detached: process.platform !== "win32", windowsHide: true, windowsVerbatimArguments,
     });
-    let output = "", timedOut = false, closed = false;
+    let output = "", timedOut = false, closed = false, exitCode, timer, grace;
+    const finish = (code) => {
+      if (closed) return; closed = true; clearTimeout(timer); clearTimeout(grace);
+      for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.destroy();
+      resolve({ exit: timedOut ? 124 : (code ?? 1), output, timedOut, interrupted: Boolean(opts.signalCode?.()) });
+    };
     const append = (chunk) => { const s = chunk.toString(); output += s; appendFileSync(opts.outputFile, s); };
     child.stdout.on("data", append); child.stderr.on("data", append);
     child.on("error", (err) => { output += err.message; appendFileSync(opts.outputFile, err.message); });
-    if (opts.stdin !== "none") { child.stdin.end(opts.input); }
-    const timer = setTimeout(() => { timedOut = true; killTree(child, true); }, opts.timeoutSec * 1000);
-    child.on("close", (code) => {
-      if (closed) return; closed = true; clearTimeout(timer);
+    child.stdin?.on("error", () => {});
+    opts.setChild?.(child);
+    if (opts.stdin !== "none") child.stdin.end(opts.input);
+    timer = setTimeout(() => { timedOut = true; killTree(child, true); grace = setTimeout(() => finish(124), 2000); }, opts.timeoutSec * 1000);
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      exitCode = code;
       if (process.platform !== "win32") killTree(child);
-      resolve({ exit: timedOut ? 124 : (code ?? 1), output, timedOut });
+      grace = setTimeout(() => finish(exitCode), 2000);
+    });
+    child.on("close", (code) => {
+      if (process.platform !== "win32") killTree(child);
+      finish(exitCode ?? code);
     });
   });
 }
@@ -132,9 +149,19 @@ function promptFor(step, workflowDir, retry) {
 
 export async function runWorkflow(wf, options = {}) {
   const { models, swapOrder } = validateWorkflow(wf);
+  if (options.approved && !options.from) issue("--approved requires --from");
+  let at = -1;
+  if (options.from) {
+    at = wf.steps.findIndex((s) => s.id === options.from);
+    if (at < 0 || wf.steps[at].type !== "gate" || !options.approved) issue("--from must name a gate and include --approved text");
+  }
+  const workflowPath = options.workflowPath ?? path.resolve("workflow.json");
+  for (const s of wf.steps) if (s.type === "agent" && s.promptFile) {
+    const promptPath = path.resolve(path.dirname(workflowPath), s.promptFile);
+    if (!existsSync(promptPath)) issue(`missing promptFile ${s.promptFile}`);
+  }
   const runId = process.env.CONDUCT_RUN_ID || randomUUID();
   const started = Date.now();
-  const workflowPath = options.workflowPath ?? path.resolve("workflow.json");
   let cwd = options.cwd ?? process.cwd(), worktree;
   if (options.repo) {
     worktree = path.join(os.tmpdir(), "conduct-runs", runId);
@@ -147,27 +174,29 @@ export async function runWorkflow(wf, options = {}) {
   mkdirSync(runDir, { recursive: true });
   const logFile = options.log ?? path.join(runDir, "run.ndjson");
   mkdirSync(path.dirname(logFile), { recursive: true });
-  writeFileSync(logFile, "");
+  if (!options.from) writeFileSync(logFile, "");
   const runs = Object.fromEntries(wf.steps.map((s) => [s.id, 0]));
   const retries = Object.create(null), currentModel = Object.create(null), retryInfo = Object.create(null);
   for (const s of wf.steps) if (s.type === "agent") currentModel[s.id] = s.model;
-  event(logFile, runId, "start", { workflow: workflowPath, cwd, ...(worktree ? { worktree } : {}) });
+  if (!options.from) event(logFile, runId, "start", { workflow: workflowPath, cwd, ...(worktree ? { worktree } : {}) });
   let idx = 0, final = { status: "success", runs };
   if (options.from) {
-    const at = wf.steps.findIndex((s) => s.id === options.from);
-    if (at < 0 || wf.steps[at].type !== "gate" || !options.approved) throw new Error("--from must name a gate and include --approved text");
     event(logFile, runId, "approval", { step: options.from, approved: options.approved });
     idx = at + 1;
   }
   while (idx < wf.steps.length) {
+    if (signalCode) { final = { status: "interrupted", runs }; break; }
     const step = wf.steps[idx];
     if (step.type === "gate") {
       const command = `node ${shellQuote(fileURLToPath(import.meta.url))} ${shellQuote(workflowPath)} --cwd ${shellQuote(cwd)} --from ${shellQuote(step.id)} --approved ${shellQuote("<who: text>")}${options.log ? ` --log ${shellQuote(options.log)}` : ""}`;
       const resume = process.platform === "win32" ? `set "CONDUCT_RUN_ID=${runId}" && ${command}` : `CONDUCT_RUN_ID=${shellQuote(runId)} ${command}`;
       final = { status: "gate", step: step.id, resume, runs }; break;
     }
-    const n = ++runs[step.id], begin = Date.now();
-    const before = step.type === "agent" ? hashChecks(wf.steps) : null;
+    const existingFiles = options.from && existsSync(runDir) ? readdirSync(runDir) : [];
+    const pattern = new RegExp(`^${step.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-(\\d+)\\.(?:log|prompt\\.md)$`);
+    const prior = existingFiles.map((name) => pattern.exec(name)).filter(Boolean).reduce((max, match) => Math.max(max, Number(match[1])), 0);
+    const n = ++runs[step.id] + prior, begin = Date.now();
+    const before = step.type === "agent" ? hashChecks(wf.steps, cwd) : null;
     const modelName = step.type === "agent" ? currentModel[step.id] : null;
     const model = modelName ? models[modelName] : null;
     const effort = step.type === "agent" ? (step.effort ?? model.effort ?? "medium") : undefined;
@@ -182,13 +211,16 @@ export async function runWorkflow(wf, options = {}) {
         if (existsSync(grokExe)) argv[0] = grokExe;
       }
     } else if (step.argv) argv = step.argv;
-    else argv = process.platform === "win32" ? [process.env.ComSpec || "cmd.exe", "/d", "/s", "/c", step.command] : ["/bin/sh", "-c", step.command];
+    else argv = process.platform === "win32" ? [process.env.ComSpec || "cmd.exe", "/d", "/s", "/c", `"${step.command}"`] : ["/bin/sh", "-c", step.command];
     const outputFile = path.join(runDir, `${step.id}-${n}.log`);
     writeFileSync(outputFile, "");
-    const result = await runChild(argv, { cwd, env: { ...process.env, CONDUCT_RUN_ID: runId }, stdin: step.type === "agent" ? (model.stdin ?? "prompt") : "none", input, timeoutSec: step.timeoutSec ?? (step.type === "agent" ? 1800 : 600), outputFile });
+    if (signalCode) { final = { status: "interrupted", runs }; break; }
+    const result = await runChild(argv, { cwd, env: { ...process.env, CONDUCT_RUN_ID: runId }, stdin: step.type === "agent" ? (model.stdin ?? "prompt") : "none", input, timeoutSec: step.timeoutSec ?? (step.type === "agent" ? 1800 : 600), outputFile, setChild: (child) => { liveChild = child; }, signalCode: () => signalCode });
     const lower = result.output;
     const outcome = result.timedOut ? "timeout" : step.type === "agent" && result.exit !== 0 && LIMIT.test(lower) ? "limit" : result.exit === 0 ? "pass" : "fail";
     event(logFile, runId, "attempt", { step: step.id, type: step.type, n, ...(modelName ? { model: modelName, effort } : {}), exit: result.exit, outcome, ms: Date.now() - begin });
+    liveChild = null;
+    if (result.interrupted) { final = { status: "interrupted", runs }; break; }
     if (step.type === "agent" && !checksUnchanged(before)) { final = { status: "check-tampered", failedStep: step.id, runs }; break; }
     if (step.type === "agent" && ["timeout", "limit"].includes(outcome)) {
       const at = swapOrder.indexOf(modelName);
@@ -222,6 +254,7 @@ export async function runWorkflow(wf, options = {}) {
 }
 
 const idsIndex = (steps, id) => steps.findIndex((s) => s.id === id);
+let liveChild = null, signalCode = 0;
 
 function parseArgs(args) {
   if (!args.length) throw new Error("usage: step-runner.mjs <workflow.json> [--repo dir | --cwd dir] [--from id --approved text] [--log file]");
@@ -239,13 +272,22 @@ async function main() {
   let args, result;
   try {
     args = parseArgs(process.argv.slice(2));
-    const file = path.resolve(args.workflow), wf = JSON.parse(readFileSync(file, "utf8"));
+    const file = path.resolve(args.workflow);
+    let wf;
+    try { wf = JSON.parse(readFileSync(file, "utf8")); } catch (err) { err.name = "WorkflowError"; throw err; }
+    const handlers = new Map([["SIGINT", 130], ["SIGTERM", 143], ["SIGHUP", 129]]);
+    const listeners = new Map([...handlers].map(([signal, code]) => {
+      const listener = () => { signalCode = code; if (liveChild) killTree(liveChild, true); };
+      process.on(signal, listener);
+      return [signal, listener];
+    }));
     result = await runWorkflow(wf, { workflowPath: file, repo: args.repo, cwd: args.cwd ? path.resolve(args.cwd) : undefined, from: args.from, approved: args.approved, log: args.log ? path.resolve(args.log) : undefined });
+    for (const [signal, listener] of listeners) process.off(signal, listener);
     process.stdout.write(JSON.stringify(result) + "\n");
-    process.exitCode = result.status === "success" ? 0 : result.status === "gate" ? 3 : 1;
+    process.exitCode = result.status === "success" ? 0 : result.status === "gate" ? 3 : signalCode || 1;
   } catch (err) {
-    process.stderr.write(`${String(err.message).startsWith("invalid argument") || String(err.message).startsWith("usage:") ? "step-runner: " : "step-runner: invalid workflow: "}${err.message}\n`);
-    process.exitCode = 2;
+    process.stderr.write(`${err.name === "WorkflowError" ? "step-runner: invalid workflow: " : "step-runner: "}${err.message}\n`);
+    process.exitCode = err.name === "WorkflowError" || err.message.startsWith("invalid argument") || err.message.startsWith("usage:") || err.message === "--repo and --cwd cannot be combined" ? 2 : 1;
   }
 }
 

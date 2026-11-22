@@ -112,3 +112,45 @@ test("unreadable stdin exits 2", () => {
   assert.equal(hook("not json").status, 2);
   assert.equal(hook("").status, 2);
 });
+
+const SUBAGENT = { agent_id: "a1", agent_type: "general-purpose" };
+
+test("a subagent payload is allowed for non-dispatch tools and commands", () => {
+  for (const [label, env] of [["without CONDUCT_RUN_ID", envWithout()], ["with CONDUCT_RUN_ID", envWith()]]) {
+    assertAllow(bash("ls", { env, extra: SUBAGENT }), `subagent Bash ls ${label}`);
+    assertAllow(bash("grep -rn codex docs", { env, extra: SUBAGENT }), `subagent Bash grep ${label}`);
+    assertAllow(hook(payload("Read", { file_path: "docs/a.md" }, SUBAGENT), env), `subagent Read ${label}`);
+    assertAllow(hook(payload("Write", { file_path: "a.txt", content: "x" }, SUBAGENT), env), `subagent Write ${label}`);
+  }
+});
+
+test("a subagent codex dispatch is denied even with CONDUCT_RUN_ID", () => {
+  assertDeny(bash("codex exec x", { env: envWith(), extra: SUBAGENT }), "subagent codex with CONDUCT_RUN_ID");
+  assertDeny(bash("grok -p x", { env: envWith(), extra: SUBAGENT }), "subagent grok with CONDUCT_RUN_ID");
+  assertDeny(bash('bash -c "codex exec x"', { env: envWith(), extra: SUBAGENT }), "subagent bash -c codex with CONDUCT_RUN_ID");
+});
+
+const WRAPPER_DENY = [
+  'jobq add -g luna --name x -- bash -c "codex exec y"', "jobq add -g luna -- grok -p y",
+  "find . -maxdepth 0 -exec codex exec y \;", 'echo "codex exec y" | bash', 'echo "grok -p y" | sh',
+  "c=codex; $c exec y", 'script -qc "codex exec y" /dev/null', 'eval "codex exec y"',
+  "nice -n 5 codex exec y", "flock /tmp/l codex exec y", "timeout 5 codex exec y", "nohup codex exec y",
+  "watch codex exec y", "ssh host codex exec y", "parallel codex exec ::: a",
+];
+const MENTION_ALLOW = [
+  "grep -rn codex docs", "rg grok .", "which codex", "git log --grep codex", "ls ~/.codex", "jobq status -g luna",
+  'echo "codex exec y"', "cat docs/codex.md | head", 'git commit -m "fix codex wrapper"', "type codex",
+  'printf "%s\\n" codex', "head docs/codex.md", "tail -n 5 grok.log", "echo hi | bash", 'eval "echo hi"',
+];
+
+test("wrapper commands that run codex or grok are denied", () => {
+  for (const c of WRAPPER_DENY) assertDeny(bash(c), c);
+});
+
+test("commands that only mention codex or grok stay allowed", () => {
+  for (const c of MENTION_ALLOW) assertAllow(bash(c), c);
+});
+
+test("command -v codex or grok is a lookup, not a dispatch", () => {
+  for (const c of ["command -v grok", "command -v codex"]) assertAllow(bash(c), c);
+});

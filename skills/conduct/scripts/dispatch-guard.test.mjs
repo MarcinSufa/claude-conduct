@@ -154,3 +154,23 @@ test("commands that only mention codex or grok stay allowed", () => {
 test("command -v codex or grok is a lookup, not a dispatch", () => {
   for (const c of ["command -v grok", "command -v codex"]) assertAllow(bash(c), c);
 });
+
+const REPLAY_ALLOW = [
+  'pgrep -af "codex exec" | cut -c1-150',
+  "pkill -f 'codex exec -m gpt-6-luna'",
+  "node hooks/pr-proof-gate.mjs record --writer claude-opus-5-5 --reviewer codex --verdict ok",
+  'node hooks/pr-proof-gate.mjs record --reviewer "gpt-6-luna (codex exec)" --verdict ok',
+  "for c in node git codex; do printf '%s: ' $c; command -v $c; done",
+  'for d in ./*/; do case $d in *x*) continue;; esac; echo "$d"; done; echo "codex limit reset"',
+  'set -- codex x; echo "$1"',
+  'G=git; $G commit -m "codex exec"',
+];
+const REPLAY_DENY = ['c="codex exec"; $c y', 'tmux new-session -d -s w "codex exec y"', "jobq add -g luna -- codex exec y"];
+
+test("process lookups, flag values and loop variables that name codex or grok stay allowed", () => {
+  for (const c of REPLAY_ALLOW) assertAllow(bash(c), c);
+});
+
+test("a variable or tmux session that runs codex is denied", () => {
+  for (const c of REPLAY_DENY) assertDeny(bash(c), c);
+});

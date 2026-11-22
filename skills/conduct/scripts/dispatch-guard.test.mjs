@@ -259,3 +259,28 @@ test("pnpm exec codex stays denied", () => {
 test("runners that run something else, and codex --version through npm exec, stay allowed", () => {
   for (const c of ["pueue add -- npm test", "npm exec prettier -- --check .", "npm x tsc", "npm exec codex -- --version"]) assertAllow(bash(c), c);
 });
+
+const UNRESOLVABLE_WORD_ALLOW = [
+  'G=(git -c user.name=x); "${G[@]}" fetch -q origin main',
+  'run() { env "$@" node tools/x.mjs; }; run A=1',
+  'eval "$1"',
+  'cd w && eval "$@" 2>&1 | grep x',
+  '[[ "$s1" =~ ^(Done|Failed)$ ]] && echo ok',
+  "s=$(( ${2%:*}*60 + 10#${2#*:} ))",
+  '"${PGD%pg_dump}pg_restore" -l "$out"',
+  "xargs -P 6 -n 2 sh -c 'A=$(($0+4000)) node tools/x.mjs'",
+  'env -u CLAUDE_PLUGIN_ROOT sh -c "${c/bash /ls -la }"',
+  '"$@" 2>&1 | tail -1',
+];
+
+test("positional, array, pattern and arithmetic words the guard cannot resolve stay allowed when nothing names codex or grok", () => {
+  for (const c of UNRESOLVABLE_WORD_ALLOW) assertAllow(bash(c), c);
+});
+
+test("arithmetic beside a codex loop word or an exempt grok call is not a substitution that runs codex", () => {
+  for (const c of [
+    'for t in codex claude; do echo "$t $(( $(date +%s) - 1 ))"; done',
+    "end=$(( $(date +%s) + 8*3600 )); until ! grok models 2>&1 | grep -q x; do sleep 60; done",
+  ]) assertAllow(bash(c), c);
+  for (const c of DYNAMIC_WORD_DENY) assertDeny(bash(c), c);
+});

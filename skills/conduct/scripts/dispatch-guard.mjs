@@ -7,7 +7,7 @@ import { parseShell, stripPrefixes } from "./conductor-guard.mjs";
 const mentionsDispatch = (s) => /\b(?:codex|grok)\b/i.test(s);
 const normalized = (s) => path.basename(s ?? "").toLowerCase().replace(/\.(?:exe|cmd)$/i, "");
 const exemptions = new Set(["--version", "-V", "--help", "-h", "help"]);
-const RUNS_COMMAND = new Set(["jobq", "pueue", "npm", "bun", "watch", "ssh", "parallel", "script", "time", "strace", "systemd-run", "tmux", "screen", "su", "runuser", "setpriv", "taskset", "chrt"]);
+const RUNS_COMMAND = new Set(["jobq", "pueue", "watch", "ssh", "parallel", "script", "time", "strace", "systemd-run", "tmux", "screen", "su", "runuser", "setpriv", "taskset", "chrt"]);
 const READERS = new Set(["grep", "egrep", "fgrep", "rg", "ag", "which", "type", "ls", "cat", "head", "tail", "less", "more", "wc", "git", "echo", "printf"]);
 
 function isExempt(name, args) {
@@ -16,7 +16,7 @@ function isExempt(name, args) {
   return name === "grok" && args[0] === "models";
 }
 
-// ponytail: Scripts on disk and interpreter code read from files or stdin are invisible to this hook; only inline -c/-e code is inspected. Aliases and shell functions are invisible too; upgrade path is a codex/grok wrapper first in PATH that checks CONDUCT_RUN_ID.
+// ponytail: Scripts on disk and interpreter code read from files or stdin are invisible to this hook; only inline -c/-e/-E/-p/-r code is inspected. Aliases and shell functions are invisible too; unresolved `$` words (positional, arrays, patterns, arithmetic) are allowed unless their path basename is codex/grok. Upgrade path is a codex/grok wrapper first in PATH that checks CONDUCT_RUN_ID.
 function inspect(command, depth = 0) {
   if (depth > 3) return true;
   let commands;
@@ -40,11 +40,18 @@ function inspect(command, depth = 0) {
       }
     }
   }
-  for (const parsed of commands) if (inspectWords(parsed.words, depth, command, vars, parsed.stdin, commands)) return true;
+  const lookupNamesDispatch = commands.some((parsed) => {
+    if (["for", "select", "case"].includes(normalized(parsed.words[0]))) return false;
+    const commandWords = stripPrefixes(parsed.words);
+    const name = normalized(commandWords[0]);
+    if ((name === "codex" || name === "grok") && isExempt(name, commandWords.slice(1))) return false;
+    return parsed.words.some((part) => ["codex", "grok"].includes(normalized(part)));
+  });
+  for (const parsed of commands) if (inspectWords(parsed.words, depth, command, vars, parsed.stdin, lookupNamesDispatch)) return true;
   return false;
 }
 
-function inspectWords(inputWords, depth, raw = "", vars = new Map(), stdin = [], commands = []) {
+function inspectWords(inputWords, depth, raw = "", vars = new Map(), stdin = [], lookupNamesDispatch = false) {
   if (depth > 3) return true;
   let words = inputWords;
   if (!words.length) return false;
@@ -53,18 +60,13 @@ function inspectWords(inputWords, depth, raw = "", vars = new Map(), stdin = [],
   if (!words.length) return false;
   if (/^(?:\$|`)/.test(words[0])) {
     const expanded = expandWord(words[0], vars);
-    if (expanded.substitution) return commands.some((parsed) => {
-      if (["for", "select", "case"].includes(normalized(parsed.words[0]))) return false;
-      const commandWords = stripPrefixes(parsed.words);
-      const name = normalized(commandWords[0]);
-      if ((name === "codex" || name === "grok") && isExempt(name, commandWords.slice(1))) return false;
-      return parsed.words.some((part) => ["codex", "grok"].includes(normalized(part)));
-    });
+    if (expanded.substitution) return lookupNamesDispatch;
     if (!expanded.unknown) {
       const expandedWords = expanded.value.split(/\s+/).filter(Boolean);
-      return inspectWords([...expandedWords, ...words.slice(1)], depth + 1, raw, vars, stdin, commands);
+      return inspectWords([...expandedWords, ...words.slice(1)], depth + 1, raw, vars, stdin, lookupNamesDispatch);
     }
-    return false;
+    const name = normalized(expanded.value);
+    return (name === "codex" || name === "grok") && !isExempt(name, words.slice(1));
   }
   let name = normalized(words[0]), args = words.slice(1);
   if (/^@openai\/codex(?:@.*)?$/i.test(words[0])) name = "codex";
@@ -84,7 +86,7 @@ function inspectWords(inputWords, depth, raw = "", vars = new Map(), stdin = [],
   }
   if (name === "bun" && args[0] === "x") { args = args.slice(1); name = "runner"; }
   if (name === "pueue" && args[0] === "add") { const d = args.indexOf("--"); if (d >= 0) { args = args.slice(d + 1); name = "runner"; } }
-  if (name === "runner") return inspectWords(args, depth, raw, vars, stdin, commands);
+  if (name === "runner") return inspectWords(args, depth, raw, vars, stdin, lookupNamesDispatch);
   if (name === "codex" || name === "grok") return !isExempt(name, args);
   if (READERS.has(name) || (name === "jobq" && args[0] !== "add")) return false;
   if (name === "eval") return inspect(expand(args.join(" "), vars), depth + 1);
@@ -93,16 +95,26 @@ function inspectWords(inputWords, depth, raw = "", vars = new Map(), stdin = [],
       if (!["-exec", "-execdir", "-ok", "-okdir"].includes(args[i])) continue;
       let end = i + 1;
       while (end < args.length && args[end] !== ";" && args[end] !== "+") end++;
-      if (inspectWords(args.slice(i + 1, end), depth, raw, vars, [], commands)) return true;
+      if (inspectWords(args.slice(i + 1, end), depth, raw, vars, [], lookupNamesDispatch)) return true;
       i = end;
     }
     return false;
   }
   if (["bash", "sh", "zsh", "dash"].includes(name)) {
-    for (let i = 0; i < args.length; i++) if (args[i] === "-c" || (args[i].startsWith("-") && !args[i].startsWith("--") && args[i].length > 2 && args[i].endsWith("c"))) {
-      if (i + 1 >= args.length || inspect(expand(args[i + 1], vars), depth + 1)) return true;
-      return false;
+    let commandFlag = false;
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i];
+      if (arg === "--") {
+        if (commandFlag) return i + 1 >= args.length || inspect(expand(args[i + 1], vars), depth + 1);
+        break;
+      }
+      if (["-o", "-O", "--rcfile", "--init-file"].includes(arg)) { i++; continue; }
+      if (/^-[A-Za-z]+$/.test(arg)) { if (arg.includes("c")) commandFlag = true; continue; }
+      if (arg.startsWith("-")) continue;
+      if (commandFlag) return inspect(expand(arg, vars), depth + 1);
+      break;
     }
+    if (commandFlag) return true;
     let hasScript = false, readStdin = false;
     for (let i = 0; i < args.length; i++) {
       const arg = args[i];
@@ -123,17 +135,12 @@ function inspectWords(inputWords, depth, raw = "", vars = new Map(), stdin = [],
     else if (args[i].startsWith("-")) continue;
     else break;
   }
-  const variable = /^\$\{?(\w+)\}?$/.exec(words[0]);
-  if (variable) {
-    const value = vars.get(variable[1]);
-    return value !== undefined ? inspectWords([...value.split(/\s+/).filter(Boolean), ...args], depth + 1, raw, vars, stdin, commands) : false;
-  }
   if (!RUNS_COMMAND.has(name)) return false;
   const dashDash = words.indexOf("--", 1);
-  if (dashDash > 0 && inspectWords(words.slice(dashDash + 1), depth, raw, vars, [], commands)) return true;
+  if (dashDash > 0 && inspectWords(words.slice(dashDash + 1), depth, raw, vars, [], lookupNamesDispatch)) return true;
   for (let i = 1; i < words.length; i++) {
     const laterName = normalized(words[i]);
-    if (laterName === "codex" || laterName === "grok") return inspectWords(words.slice(i), depth, raw, vars, [], commands);
+    if (laterName === "codex" || laterName === "grok") return inspectWords(words.slice(i), depth, raw, vars, [], lookupNamesDispatch);
     if (/\s/.test(words[i]) && inspect(words[i], depth + 1)) return true;
   }
   return false;

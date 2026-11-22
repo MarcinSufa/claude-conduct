@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -107,7 +107,7 @@ function setup(t) {
     records: (kind) => readdirSync(state).filter((f) => /^\d{3}-(worker|check)\.json$/.test(f)).sort()
       .map((f) => JSON.parse(readFileSync(path.join(state, f), "utf8"))).filter((r) => !kind || r.kind === kind),
     servers: () => readdirSync(state).filter((f) => /^server-.*\.json$/.test(f)).map((f) => JSON.parse(readFileSync(path.join(state, f), "utf8"))),
-    run: (workflow, args = [], { env = {}, cwd = root, log = true, pathEnv } = {}) => {
+    prepare: (workflow, { env = {}, pathEnv } = {}) => {
       const n = ++ctx.n;
       const wfPath = path.join(root, `wf-${n}.json`);
       writeFileSync(wfPath, typeof workflow === "string" ? workflow : JSON.stringify(workflow));
@@ -119,6 +119,10 @@ function setup(t) {
         for (const k of Object.keys(childEnv)) if (k.toUpperCase() === "PATH") delete childEnv[k];
         childEnv.PATH = pathEnv;
       }
+      return { wfPath, logPath, childEnv };
+    },
+    run: (workflow, args = [], { env = {}, cwd = root, log = true, pathEnv } = {}) => {
+      const { wfPath, logPath, childEnv } = ctx.prepare(workflow, { env, pathEnv });
       const r = spawnSync(node, [runner, wfPath, ...args, ...(log ? ["--log", logPath] : [])], { cwd, env: childEnv, encoding: "utf8", timeout: 60_000 });
       const lines = (r.stdout ?? "").trim().split("\n").filter(Boolean);
       let result = null;
@@ -170,6 +174,66 @@ async function assertServersGone(servers, expected) {
   }
 }
 const assertPidsGone = (pids) => { for (const pid of pids) assert.equal(pidAlive(pid), false, `process ${pid} still running`); };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(fn, ms) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) { if (await fn()) return true; await sleep(25); }
+  return !!(await fn());
+}
+
+function initRepo(c, files) {
+  const repo = path.join(c.root, "repo"); mkdirSync(repo);
+  const git = (...a) => {
+    const g = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: repo, encoding: "utf8" });
+    assert.equal(g.status, 0, g.stderr);
+    return g.stdout.trim();
+  };
+  git("init", "-q");
+  for (const [name, { body, mode }] of Object.entries(files).map(([k, v]) => [k, typeof v === "string" ? { body: v } : v])) {
+    writeFileSync(path.join(repo, name), body, mode ? { mode } : undefined);
+  }
+  git("add", "."); git("commit", "-q", "-m", "init");
+  return { repo, git };
+}
+
+// argv: mode pidFile. hang: records its own pid and stays up. background: starts a child that inherits stdout, records its pid, exits 0.
+const HELPER_JS = `import { spawn } from "node:child_process";
+import { renameSync, writeFileSync } from "node:fs";
+const [mode, pidFile] = process.argv.slice(2);
+const writePid = (pid) => { writeFileSync(pidFile + ".tmp", String(pid)); renameSync(pidFile + ".tmp", pidFile); };
+if (mode === "hang") { writePid(process.pid); setTimeout(() => {}, 30_000); }
+else if (mode === "background") {
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], { stdio: "inherit" });
+  writePid(child.pid); child.unref(); process.stdout.write("started\\n");
+}
+`;
+
+function helper(c) {
+  const file = path.join(c.root, "bin", "helper.mjs");
+  writeFileSync(file, HELPER_JS);
+  const pidFiles = [];
+  const readPid = (pidFile) => existsSync(pidFile) ? Number(readFileSync(pidFile, "utf8")) : null;
+  c.extraCleanup.push(() => {
+    for (const pid of pidFiles.map(readPid).filter(Boolean)) {
+      for (const target of [-pid, pid]) { try { process.kill(target, "SIGKILL"); } catch { /* already gone */ } }
+    }
+  });
+  return {
+    argv: (mode, name) => { const pidFile = path.join(c.state, `${name}.pid`); pidFiles.push(pidFile); return { argv: [node, file, mode, pidFile], pidFile }; },
+    readPid,
+  };
+}
+
+function spawnRunner(c, workflow, args = []) {
+  const { wfPath, logPath, childEnv } = c.prepare(workflow);
+  const child = spawn(node, [runner, wfPath, ...args, "--log", logPath], { cwd: c.root, env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "", stderr = "";
+  child.stdout.on("data", (d) => { stdout += d; });
+  child.stderr.on("data", (d) => { stderr += d; });
+  const exited = new Promise((resolve) => child.on("close", (code, signal) => resolve({ code, signal })));
+  c.extraCleanup.unshift(() => { try { process.kill(child.pid, "SIGKILL"); } catch { /* already gone */ } });
+  return { child, exited, logPath, out: () => ({ stdout, stderr }) };
+}
 
 // ---------- validation ----------
 
@@ -433,13 +497,7 @@ test("--cwd runs every step in that directory; without --cwd/--repo steps run in
 
 test("--repo creates a detached worktree conduct-runs/<runId> of the repo's HEAD, runs every step there and keeps it", (t) => {
   const c = setup(t);
-  const repo = path.join(c.root, "repo"); mkdirSync(repo);
-  const git = (...a) => {
-    const g = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: repo, encoding: "utf8" });
-    assert.equal(g.status, 0, g.stderr);
-    return g.stdout.trim();
-  };
-  git("init", "-q"); writeFileSync(path.join(repo, "a.txt"), "a\n"); git("add", "a.txt"); git("commit", "-q", "-m", "init");
+  const { repo, git } = initRepo(c, { "a.txt": "a\n" });
   const head = git("rev-parse", "HEAD");
   const r = c.run(c.wf([c.agent(), c.check("pass")]), ["--repo", repo]);
   if (r.result?.worktree) c.extraCleanup.unshift(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", r.result.worktree]));
@@ -634,4 +692,111 @@ test("without --log the log goes to <CONDUCT_HOME>/runs/<runId>/run.ndjson next 
   assert.ok(readFileSync(path.join(dir, "implement-1.log"), "utf8").includes("WORKER-OUT"));
   assert.ok(readFileSync(path.join(dir, "check-1.log"), "utf8").includes("CHECK-PASS"));
   assert.equal(readFileSync(path.join(dir, "implement-1.prompt.md"), "utf8"), PROMPT);
+});
+
+// ---------- signals, stdin, stdio-holding children ----------
+
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  test(`POSIX: ${signal} to the runner while a check runs kills the step's process and logs an end event`, POSIX_ONLY, async (t) => {
+    const c = setup(t);
+    const h = helper(c);
+    const { argv, pidFile } = h.argv("hang", "step");
+    const r = spawnRunner(c, { steps: [{ id: "check", type: "check", argv, timeoutSec: 60 }] });
+    assert.ok(await until(() => existsSync(pidFile), 5000), "the check step started");
+    const pid = h.readPid(pidFile);
+    r.child.kill(signal);
+    const exit = await Promise.race([r.exited, sleep(5000).then(() => null)]);
+    assert.ok(exit, `the runner exited within 5 s of ${signal}`);
+    assert.notEqual(exit.code, 0, "the runner does not report a clean exit");
+    await until(() => !pidAlive(pid), 3000);
+    assert.equal(pidAlive(pid), false, `step process ${pid} still running after the runner exited on ${signal}`);
+    assert.equal(events(readLog(r.logPath), "end").length, 1, `the log has an end event after ${signal}`);
+  });
+}
+
+test("an agent that exits without reading a prompt larger than the pipe buffer does not crash the runner: the limit swaps and the check runs", (t) => {
+  const c = setup(t);
+  const prompt = "x".repeat(300_000);
+  const quick = { argv: [node, "-e", "process.stderr.write('Error: You exceeded your usage limit\\n'); process.exitCode = 1;"], stdin: "prompt" };
+  const r = c.run(c.wf([c.agent({ model: "quick", prompt }), c.check("pass")], { models: { quick, b: c.model("ok", "b") }, swapOrder: ["quick", "b"] }));
+  assert.doesNotMatch(r.stderr, /Unhandled 'error'|EPIPE/, "the runner did not crash on the closed stdin");
+  assert.ok(r.result, `one JSON result line on stdout (stdout: ${JSON.stringify(r.stdout)})`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.result.status, "success");
+  const swaps = events(r.log, "swap");
+  assert.deepEqual(swaps.map((s) => [s.step, s.from, s.to, s.reason]), [["implement", "quick", "b", "limit"]]);
+  assert.deepEqual(c.records().map((x) => x.label ?? x.kind), ["b", "check"]);
+  assert.equal(c.records("worker")[0].stdin.length, prompt.length, "the next model got the whole prompt");
+});
+
+test("a check that exits 0 leaving a background child on its stdout passes at once, and the child is killed after the step", async (t) => {
+  const c = setup(t);
+  const h = helper(c);
+  const { argv, pidFile } = h.argv("background", "bg");
+  const t0 = Date.now();
+  const r = c.run({ steps: [{ id: "check", type: "check", argv, timeoutSec: 3 }] });
+  const ms = Date.now() - t0;
+  const [att] = events(r.log, "attempt");
+  assert.deepEqual([att?.exit, att?.outcome], [0, "pass"], `the check attempt is a pass, not a timeout (${JSON.stringify(att)})`);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.result.status, "success");
+  assert.ok(ms < 2500, `the run took ${ms} ms against a 3000 ms step timeout`);
+  if (process.platform !== "win32") {
+    const pid = h.readPid(pidFile);
+    assert.ok(pid, "the background child started");
+    await until(() => !pidAlive(pid), 3000);
+    assert.equal(pidAlive(pid), false, `background child ${pid} still running after the step`);
+  }
+});
+
+// ---------- check out of reach: relative argv[0] ----------
+
+test("POSIX: an agent edit of a relative check argv[0] ends --repo and --cwd runs check-tampered, as when the runner starts in the repo", POSIX_ONLY, (t) => {
+  const c = setup(t);
+  const { repo, git } = initRepo(c, { "check.sh": { body: "#!/bin/sh\nexit 0\n", mode: 0o755 } });
+  const wf = c.wf([c.agent(), { id: "check", type: "check", argv: ["./check.sh"], timeoutSec: 2 }], { models: { fake: c.model("tamper=./check.sh", "fake") } });
+  const repoRun = c.run(wf, ["--repo", repo]);
+  if (repoRun.result?.worktree) c.extraCleanup.unshift(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", repoRun.result.worktree]));
+  const cwdRun = c.run(wf, ["--cwd", repo]);
+  git("checkout", "--", "check.sh");
+  const control = c.run(wf, [], { cwd: repo });
+  const statuses = { repo: repoRun.result?.status, cwd: cwdRun.result?.status, control: control.result?.status };
+  assert.deepEqual(statuses, { repo: "check-tampered", cwd: "check-tampered", control: "check-tampered" });
+  assert.deepEqual(c.records("check"), [], "no tampered check ran");
+});
+
+// ---------- resume and up-front rejection ----------
+
+test("resuming after a gate keeps the pre-gate events in run.ndjson", (t) => {
+  const c = setup(t);
+  const env = { CONDUCT_RUN_ID: "rid-resume" };
+  const wf = c.wf([c.agent(), c.check("pass"), { id: "ship", type: "gate" }, c.check("pass", { id: "post" })]);
+  assert.equal(c.run(wf, [], { env, log: false }).status, 3);
+  const go = c.run(wf, ["--from", "ship", "--approved", "Marcin: ok"], { env, log: false });
+  assert.equal(go.status, 0, go.stderr);
+  const log = readLog(path.join(c.home, "runs", "rid-resume", "run.ndjson"));
+  assert.equal(kindOf(log[0]), "start");
+  assert.deepEqual(events(log, "attempt").map((e) => e.step), ["implement", "check", "post"], "attempts from both invocations");
+  assert.equal(events(log, "approval").length, 1);
+  assert.equal(kindOf(log.at(-1)), "end");
+  assert.equal(log.at(-1).status, "success");
+});
+
+test("--from naming a step that is not a gate with --repo exits 2 before creating a worktree or a run log", (t) => {
+  const c = setup(t);
+  const { repo, git } = initRepo(c, { "a.txt": "a\n" });
+  const before = git("worktree", "list", "--porcelain");
+  const r = c.run(c.wf([c.agent(), c.check(), { id: "ship", type: "gate" }]), ["--repo", repo, "--from", "check", "--approved", "Marcin: ok"]);
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(git("worktree", "list", "--porcelain"), before, "no worktree was added");
+  assert.equal(existsSync(r.logPath), false, "no --log file was written");
+  const runsDir = path.join(c.home, "runs");
+  assert.deepEqual(existsSync(runsDir) ? readdirSync(runsDir) : [], [], "no run dir was created");
+});
+
+test("an agent promptFile that does not exist exits 2 before any step runs", (t) => {
+  const c = setup(t);
+  const r = c.run(c.wf([c.check("pass", { id: "pre" }), c.agent({ prompt: undefined, promptFile: path.join(c.root, "missing.md") }), c.check()]));
+  assertRejected(c, r, "missing promptFile");
+  assert.deepEqual(events(r.log, "attempt"), []);
 });

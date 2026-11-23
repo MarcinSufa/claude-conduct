@@ -306,6 +306,15 @@ test("option values after o or O in a cluster and + options do not end the -c sc
   for (const c of ["bash -euo pipefail -c 'ls'", "bash -eo pipefail script.sh", "bash +x run.sh codex"]) assertAllow(bash(c), c);
 });
 
+test("shell code on stdin after option values or + options is inspected, and +c and repeated o letters run code", () => {
+  for (const c of [
+    heredoc("bash -euo pipefail", "codex exec x"), heredoc("bash -lO extglob", "codex exec x"), heredoc("bash +e", "codex exec x"),
+    "echo 'codex exec x' | bash +x", "bash -eoo pipefail nounset -c 'codex exec x'", "bash -oO pipefail extglob -c 'codex exec x'",
+    "bash +c 'codex exec x'",
+  ]) assertDeny(bash(c), c);
+  for (const c of [heredoc("bash -euo pipefail", "ls"), heredoc("bash run.sh", "codex exec x"), "bash -- run.sh codex", "sh +c 'ls'"]) assertAllow(bash(c), c);
+});
+
 test("npm and bun commands other than exec, x and bun x that name codex stay allowed", () => {
   for (const c of ["npm install -g @openai/codex", "npm view @openai/codex version", "bun add -g @openai/codex", "npm test -- --grep codex"]) assertAllow(bash(c), c);
 });

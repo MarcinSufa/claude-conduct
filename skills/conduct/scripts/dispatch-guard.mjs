@@ -102,34 +102,27 @@ function inspectWords(inputWords, depth, raw = "", vars = new Map(), stdin = [],
   }
   if (["bash", "sh", "zsh", "dash"].includes(name)) {
     let commandFlag = false;
+    let readStdin = false;
+    let operand;
     for (let i = 0; i < args.length; i++) {
       const arg = args[i];
       if (arg === "--") {
-        if (commandFlag) return i + 1 >= args.length || inspect(expand(args[i + 1], vars), depth + 1);
+        operand = args[i + 1];
         break;
       }
-      if (["-o", "-O", "--rcfile", "--init-file"].includes(arg)) { i++; continue; }
+      if (["--rcfile", "--init-file"].includes(arg)) { i++; continue; }
       if (/^[-+][A-Za-z]+$/.test(arg)) {
-        if (arg.startsWith("-") && arg.includes("c")) commandFlag = true;
-        if (arg.includes("o") || arg.includes("O")) i++;
+        if (arg.includes("c")) commandFlag = true;
+        if (arg.startsWith("-") && arg.includes("s")) readStdin = true;
+        for (const letter of arg.slice(1)) if (letter === "o" || letter === "O") i++;
         continue;
       }
       if (arg.startsWith("-")) continue;
-      if (commandFlag) return inspect(expand(arg, vars), depth + 1);
+      operand = arg;
       break;
     }
-    if (commandFlag) return true;
-    let hasScript = false, readStdin = false;
-    for (let i = 0; i < args.length; i++) {
-      const arg = args[i];
-      if (arg === "--") { hasScript = i + 1 < args.length; break; }
-      if (arg === "-s" || (arg.startsWith("-") && !arg.startsWith("--") && arg.slice(1).includes("s"))) { readStdin = true; continue; }
-      if (arg === "-o" || arg === "-O") { i++; continue; }
-      if (arg.startsWith("-")) continue;
-      hasScript = arg !== "-";
-      break;
-    }
-    if (readStdin) hasScript = false;
+    if (commandFlag) return operand === undefined || inspect(expand(operand, vars), depth + 1);
+    const hasScript = operand !== undefined && operand !== "-" && !readStdin;
     return !hasScript && (stdin.some(mentionsDispatch) || mentionsDispatch(raw));
   }
   const inlineFlags = { node: ["-e", "--eval", "-p", "--print"], nodejs: ["-e", "--eval", "-p", "--print"], bun: ["-e", "--eval", "-p", "--print"], perl: ["-e", "-E"], ruby: ["-e"], php: ["-r"] };

@@ -10,6 +10,8 @@ context loss and the operator can audit any leg:
   fusion-<slice>.md             # consensus / divergence / discarded / decision
   gate-<slice>.{sh,ts,py}       # executable gate + fail messages
   <vendor>-<slice>.md           # review leg outputs (codex-, grok-, …)
+  <slice>-review/               # review pack (scripts/review-pack.mjs): prompt.md, manifest.json, need.md, review.md
+  review-ledger.ndjson          # tokens, cost and pack size of every review-pack.mjs call
   events.ndjson                 # NDJSON event stream (leg lifecycle from hooks, semantics from the conductor)
   ledger.md                     # leg ledger - one row per closed slice, spec in references/ledger.md
 ```

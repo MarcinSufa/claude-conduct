@@ -42,8 +42,8 @@ Rules:
   only one vendor raised is a divergence, not noise - record why it was accepted or rejected.
 - **Hand review legs the real diff (earned 2026-07-28; bound 2026-09-24).** Run
   `node "${CLAUDE_SKILL_DIR}/scripts/preflight-close.mjs" <worktree> --slice <slice> --diff-patch
-  > .conduct/<slice>-diff.patch` and point every review leg at that file, never at raw `git diff`
-  output. A leg without shell access that reconstructs a diff by comparing checkouts can produce a
+  > .conduct/<slice>-diff.patch`, build the review pack from it (references/token-hygiene.md rule 1)
+  and point every review leg at the pack, never at raw `git diff` output or the worktree. A leg without shell access that reconstructs a diff by comparing checkouts can produce a
   confident, fully-detailed FALSE finding: one leg "found" unauthorized scope creep, complete with
   an invented provenance story, by diffing against a stale branch. `--diff-patch` also stamps a
   `slice-state: v1` / `diff-base:` / `diff-sha256:` header onto the patch; copy the `diff-sha256`

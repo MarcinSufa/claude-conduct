@@ -15,7 +15,10 @@ the EXACT model id plus harness (`gpt-6-luna@codex`, `sonnet-5@agent`, `deepseek
 - the id actually dispatched, per the routing table's Model freshness block, never a tier name
 alone; `cost` = reported tokens per leg with a coverage denominator (`in/out per leg, N of M legs
 reported`), an unreporting subscription leg is `unknown` (never 0, never dollars, never an estimate
-- same rule as teardown's Spend step, see references/teardown.md). Old v1 rows are left as-is; do
+- same rule as teardown's Spend step, see references/teardown.md). Review legs run through
+`scripts/review-pack.mjs run` log one line per call to `.conduct/review-ledger.ndjson` (input, cache
+read, cache write, output tokens, `cost_usd` as the CLI reported it, pack bytes); copy each into the
+`cost` cell as `review <kind>: in/cr/cw/out, $<cost_usd>, pack <KB>`. Old v1 rows are left as-is; do
 not migrate them. Thirty seconds of bookkeeping; over 10-15 slices it turns "which casting works
 best" from vibes into data (feeds the future model-arena A/B). No tooling, no automation - a
 markdown table row, written by hand.

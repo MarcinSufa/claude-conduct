@@ -8,9 +8,26 @@ the measurements below.
 Apply on every worker leg, in order - cutting turns is free, cutting checks is not (measurements
 behind these rules: references/token-hygiene.md).
 
-1. **Patch, not repo.** Same rule as Fusion's "hand review legs the real diff" - every review leg
-   gets `.conduct/<slice>-diff.patch`, not shell access to grep its way to the diff.
-   Fusion details: references/opinion-fusion.md.
+1. **Patch, not repo.** Same rule as Fusion's "hand review legs the real diff". The conductor builds
+   the review pack and the reviewer sees nothing else:
+   `node scripts/review-pack.mjs build <worktree> --slice <s> [--kind full|delta|final] --brief <f>... --gate <log> --summary <f> --ask <f>`
+   writes `.conduct/<slice>-review/` with the patch (`git diff -U30` against the merge-base, or
+   `--delta-from <ref>` for a re-review after a fix), each changed file whole when under 300 lines,
+   else its changed functions (`git diff -W`), the brief or spec, the last 60 lines of gate and test
+   output, the first 40 lines of the worker summary, and the `diff-sha256` stamp. Every pack also carries a fixed
+   `## Review method` section after the ask (brief bounds vs code operators, boundaries, error paths,
+   `need:` for code outside the pack), so a custom `--ask` cannot drop it. A `final` pack is the
+   whole-branch patch plus one `--summary` per slice. Then
+   `node scripts/review-pack.mjs run <worktree> --slice <s> [--effort high]` runs a Claude reviewer as
+   one headless `claude -p` call with `--tools ""`, `--setting-sources ""`, `--strict-mcp-config`, a
+   short system prompt and a temporary cwd outside the repo: the prompt carries no worktree path and
+   the reviewer has no Read, Bash, Edit or Write. The Agent tool cannot narrow a subagent's tools per
+   call, which is why Claude review legs do not go through it. A reviewer that needs code outside the
+   pack ends with `need: <path>:<symbol>` lines (max 5); the script adds only those functions
+   (`git grep -W`, paths inside the repo only) and resumes the same session once, so the pack is a
+   cache read and only the fragments are new input. Each call appends tokens (input, cache read,
+   cache write, output), cost and pack bytes to `.conduct/review-ledger.ndjson`. Non-Claude review
+   legs get the same `prompt.md` as their whole input. Fusion details: references/opinion-fusion.md.
 2. **Effort is a tier, not a default.** `high`/`xhigh` only for legs that DECIDE; a bounded read
    against a written spec runs at `medium`.
 3. **Prefer the free cross-vendor reviewer.** A Claude subagent reviewing a non-Anthropic
@@ -41,6 +58,15 @@ patch can invent a false finding); it is also the single largest cost lever in t
 reviewer that must `grep` its way to the diff pays for the entire conversation again on every tool
 call, 20+ turns instead of 2. Give shell access only when the leg must run something (the gate, a
 repro).
+
+**Rule 1, patch-only pack, measured 2026-11-23 (startscreen program):** the old Opus review legs got
+the patch path plus the worktree and read the repo through Bash (37-75 commands, 17-80 calls). Replayed
+on the same patches with `review-pack.mjs run`: delta review $3.15 → $0.48 (one call plus one `need`
+retry, -85%), every prior-finding status and both P2 findings kept, three P3 notes lost; adversarial
+review $1.29 → $0.51 at `medium` (-60%), the P1 kept, one P2 lost (also lost at `high`, n=1 each).
+Two levers inside the pack run matter as much as the missing repo: a `need` retry that re-sends the
+pack costs a second full review (resume instead: $0.07), and the CLI's default 1 h cache write
+bills a one-shot prompt at 2x input (the script sets `FORCE_PROMPT_CACHING_5M`).
 
 **Rule 2 (effort is a tier) evidence:** overriding a profile's default upward "to be safe" is how a
 $0.01 leg becomes a $0.06 one with no better finding - verified: on race:typedenv the `high`

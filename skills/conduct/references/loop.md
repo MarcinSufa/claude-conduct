@@ -33,15 +33,17 @@ where `taskId` matches the step name in the list below.
    Worker cannot edit the gate. Worker runs the gate to green.
 7. **Per-task review** per Claude workers in SKILL.md for Claude implementations, then **≥1 cross-vendor review leg per implementer
    family** (see Cross-vendor independence rule) (taskId: review). Write the patch FIRST with
-   `--diff-patch` and hand it to the leg (see Fusion); stamp its `diff-sha256` header into the
-   leg file the vendor returns, plus `review-scope: full` (or, for a narrow re-review after a
-   small fix, `delta-from: <the diff-sha256 the leg builds on>`), so `preflight-close.mjs` can
-   bind it at close; pick effort and vendor per Token hygiene, above.
+   `--diff-patch`, then build the review pack (`scripts/review-pack.mjs build`, Token hygiene rule 1)
+   and hand the leg only the pack, never the worktree; a Claude leg runs through
+   `review-pack.mjs run`, which stamps the `diff-sha256` header and `review-scope: full` (or, with
+   `--kind delta --prev-sha256 <h>`, `delta-from: <h>`) into `.conduct/<slice>-review/review.md`;
+   other vendors' leg files get the same stamp by hand, so `preflight-close.mjs` can bind it at
+   close; pick effort and vendor per Token hygiene, above.
    Token hygiene rules: references/token-hygiene.md.
    Fusion details: references/opinion-fusion.md.
 8. **Adjudicate** into the fusion doc + route fixes: never fix yourself. Emit `--type review.verdict`
    per adjudicated leg.
-9. **Opus whole-branch review**, then hand the PR to the operator to merge (they hold authority), with the slice's `<rule> -> <choice>` lines (SKILL.md, Rule index).
+9. **Opus whole-branch review** on a `review-pack.mjs build --kind final --base origin/main` pack (branch patch plus one `--summary` per slice, no repo), then hand the PR to the operator to merge (they hold authority), with the slice's `<rule> -> <choice>` lines (SKILL.md, Rule index).
 10. **Close**: append the slice's ledger row (spec: references/ledger.md), run `preflight-close.mjs`
    BEFORE merging (a merge moves the merge-base, so every leg's `diff-sha256` reads stale
    afterward - if the merge already happened, pass `--base <the diff-base from the leg's stamped

@@ -115,7 +115,7 @@ This is the single home for the rule; other sections point back here instead of 
 
 ## Token hygiene
 
-1. **Patch, not repo.** Every review leg gets `.conduct/<slice>-diff.patch`, not shell access to reconstruct the diff.
+1. **Patch, not repo.** Every review leg sees only the review pack `.conduct/<slice>-review/` built by `scripts/review-pack.mjs build` (patch -U30, changed files under 300 lines or changed functions, brief, gate tail, worker summary): no worktree path, no shell. Claude review legs run through `review-pack.mjs run` (headless, no tools, no settings, cwd outside the repo); a missing fragment comes back as `need: <path>:<symbol>` and is added once.
 2. **Effort is a tier, not a default.** `high`/`xhigh` only for legs that DECIDE; a bounded read against a written spec runs at `medium`.
 3. **Prefer the free cross-vendor reviewer.** A Claude reviewer of a non-Anthropic implementation satisfies independence at zero marginal cost; reserve per-token Luna for Claude implementations.
 4. **Strip the per-request context tax on EVERY worker leg, not just cheap ones**: skills catalog, injected CLAUDE.md and harness prompt; Grok-harness legs use the token diet (references/grok.md).
@@ -132,7 +132,7 @@ Apply on every worker leg, in order. Measurements and full rules: references/tok
 | Orchestration: specs, briefs, dispatch, adjudication, fix triage, synthesis | **You (the conductor)** | the driving session |
 | DEFAULT implementation legs (approved plan, clear brief) | **GPT-6 Luna** | same transport as the Luna row below; the conductor (Opus) reviews |
 | Hard TDD, multi-step slices, fuzzy briefs; per-task (spec + quality) reviews | **Sonnet 5** | Agent tool, `model: sonnet` |
-| Adversarial / whole-branch reviews; hard debugging; huge-context diffs | **Opus 5** | Agent tool, `model: opus` |
+| Adversarial / whole-branch reviews; hard debugging; huge-context diffs | **Opus 5** | reviews: `node scripts/review-pack.mjs run` (headless `claude -p`, no tools); debugging: Agent tool, `model: opus` |
 | Trivial mechanical fixups, bulk renames, doc syncs | **Haiku 4.5** | Agent tool, `model: haiku` |
 | DEFAULT cross-vendor leg: per-slice review, second opinions, race judging, GPT-side implementation, high-volume/mechanical | **GPT-6 Luna** (`gpt-6-luna`, 2026-09-22) | `codex exec -m gpt-6-luna` headless in the task worktree (also via the `/codex` skill where installed); effort via `-c model_reasoning_effort=...` on the subscription. The per-token `-p luna-api` route is retired (see references/codex.md) |
 | Decision-grade GPT ONLY: plan/spec review before approval; adversarial/whole-branch review before merge; hard debug after a failed Luna/Sonnet leg; diff too big to fit twice | **GPT-6.1 Sol** (`gpt-6.1-sol`, dispatch verified 2026-10-29 with codex-cli 0.159.2) | `codex exec -m gpt-6.1-sol` headless in the task worktree |
@@ -154,9 +154,9 @@ Lifecycle, skip rules, event hooks, and casting races: references/loop.md.
 4. **Fusion**: write consensus / divergence / discarded / decision (with its `<rule> -> <choice>` lines, see Rule index) and freeze the spec; if a memory sink is bound, write the Decision and emit `--type decision.recorded` with a JSON payload file containing `{memoryId, ticketId?, phase: "fusion"}`.
 5. **Gate**: cross-vendor author writes the executable gate from the spec; verify it FAILS.
 6. **Implement**: route per the table (see Claude workers for Claude, `codex exec` cross-vendor); worker cannot edit the gate and runs it to green.
-7. **Per-task review** per Claude workers for Claude implementations, then **≥1 cross-vendor review leg per implementer family** on the real `--diff-patch`.
+7. **Per-task review** per Claude workers for Claude implementations, then **≥1 cross-vendor review leg per implementer family** on the review pack (`review-pack.mjs build --kind full`; a re-review after a fix uses `--kind delta --delta-from <reviewed commit>`).
 8. **Adjudicate** into the fusion doc + route fixes: never fix yourself; emit `--type review.verdict` per adjudicated leg.
-9. **Opus whole-branch review**, then hand the PR to the operator to merge (they hold authority), with the slice's `<rule> -> <choice>` lines.
+9. **Opus whole-branch review** on a `--kind final` pack (branch patch + one summary per slice, never the repo), then hand the PR to the operator to merge (they hold authority), with the slice's `<rule> -> <choice>` lines.
 10. **Close**: append the ledger row, run `preflight-close.mjs` BEFORE merging, then run Slice teardown in its fixed order.
 
 Opinion and fusion procedures: references/opinion-fusion.md.

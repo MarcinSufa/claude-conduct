@@ -44,6 +44,12 @@ dispatchable as a full reading agent via the Grok CLI (see references/grok.md). 
 legs barely touch Claude limits, and cross-vendor review keeps quality up - prefer them when Claude
 budget matters.
 
+**Opus review transport:** an Opus review leg (per-slice, delta or whole-branch) runs through
+`scripts/review-pack.mjs run` on the session's own login, which keeps rule 3's zero marginal cost:
+one headless call, no tools, the review pack as its only input (references/token-hygiene.md rule 1).
+Default effort is `medium` (a bounded read against a written spec); pass `--effort high` for an
+adversarial or whole-branch leg that decides the merge.
+
 **Orchestrator choice:** **Opus 5** conducts every program, both open-decision work (new spec,
 divergent legs, architecture) and execution days (plan approved, work = dispatch + collate), and
 reviews the Luna implementation legs. Fable never conducts. A

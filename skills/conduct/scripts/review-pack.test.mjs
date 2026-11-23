@@ -59,6 +59,15 @@ test("pack holds patch, small files whole, big files as function context, nothin
   assert.match(prompt, /diff-sha256: deadbeef/);
 });
 
+test("a custom ask keeps the adversarial method: brief bounds vs code operators, boundaries, error paths, need", () => {
+  const { repo, base } = fixtureRepo();
+  writeFileSync(join(repo, ".conduct/ask.md"), "Adversarial review: streak math only.\n");
+  const prompt = readFileSync(join(build(repo, base, { ask: join(repo, ".conduct/ask.md") }).dir, "prompt.md"), "utf8");
+  assert.match(prompt, /streak math only/);
+  const method = prompt.slice(prompt.indexOf("## Review method"), prompt.indexOf("## Brief"));
+  for (const item of ["`<=`", "`!==`", "off-by-one", "seams", "Error paths", "need:", "every P2"]) assert.ok(method.includes(item), item);
+});
+
 test("gate is tail-capped and worker summary head-capped at 40 lines", () => {
   const { repo, base } = fixtureRepo();
   const pack = build(repo, base);

@@ -43,6 +43,17 @@ const DEFAULT_ASK = [
   "First line: `Verdict: no P0, no P1` or `Verdict: <n> P0, <m> P1`.",
 ].join("\n");
 
+// Kept outside the ask so a custom ask cannot drop it: on the startscreen pack a reviewer without it missed a
+// `!==` where the spec said `<=`, with both lines in the pack.
+const REVIEW_METHOD = [
+  "Walk all four before the verdict, whatever the ask lists; report what they find even at P2.",
+  "1. Brief vs code: for every rule in the brief that states a comparison, bound or count (`<=`, at most, within, until, first N, before or after), find the code that implements it and check the operator and both ends. Equality (`===`, `!==`) where the brief orders values is a defect.",
+  "2. Boundaries of each changed condition and loop: empty, zero, one, the limit, first and last item, off-by-one, inclusive or exclusive ends, dates at day, month, year, leap, DST and timezone edges, a value just outside the range the code expects, and the seams where results of several calls, windows or pages are joined (overlap, gap, which value wins).",
+  "3. Error paths: what each failure throws, swallows, retries or caches, and whether the brief says so.",
+  "4. Code outside the pack: when a changed line's correctness depends on a caller, callee or type the pack does not show, ask with `need:` instead of assuming either way.",
+  "Terse means short wording, not fewer findings: list every P2 you find.",
+].join("\n");
+
 const git = (cwd, args) => execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 const head = (text, n) => text.split("\n").slice(0, n).join("\n");
 const tail = (text, n) => text.split("\n").slice(-n).join("\n");
@@ -87,6 +98,7 @@ export function buildPack({ worktree, slice, kind = "full", base, deltaFrom, bri
   const sections = [
     `# Review pack: ${slice} (${kind})\n\n${stamp.join("\n")}${kind === "delta" ? `\ndelta-base-commit: ${from}` : ""}\n`,
     `## Ask\n\n${ask ? readFileSync(ask, "utf8") : DEFAULT_ASK}\n`,
+    `## Review method\n\n${REVIEW_METHOD}\n`,
     ...brief.map((f) => `## Brief\n\n${readFileSync(f, "utf8")}\n`),
     ...summary.map((f) => `## Worker summary (first ${SUMMARY_MAX_LINES} lines)\n\n${head(readFileSync(f, "utf8"), SUMMARY_MAX_LINES)}\n`),
     gate ? `## Gate and test output (last ${GATE_MAX_LINES} lines)\n\n${fence(tail(readFileSync(gate, "utf8"), GATE_MAX_LINES))}` : "",

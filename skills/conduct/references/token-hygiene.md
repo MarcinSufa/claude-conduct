@@ -14,7 +14,9 @@ behind these rules: references/token-hygiene.md).
    writes `.conduct/<slice>-review/` with the patch (`git diff -U30` against the merge-base, or
    `--delta-from <ref>` for a re-review after a fix), each changed file whole when under 300 lines,
    else its changed functions (`git diff -W`), the brief or spec, the last 60 lines of gate and test
-   output, the first 40 lines of the worker summary, and the `diff-sha256` stamp. A `final` pack is the
+   output, the first 40 lines of the worker summary, and the `diff-sha256` stamp. Every pack also carries a fixed
+   `## Review method` section after the ask (brief bounds vs code operators, boundaries, error paths,
+   `need:` for code outside the pack), so a custom `--ask` cannot drop it. A `final` pack is the
    whole-branch patch plus one `--summary` per slice. Then
    `node scripts/review-pack.mjs run <worktree> --slice <s> [--effort high]` runs a Claude reviewer as
    one headless `claude -p` call with `--tools ""`, `--setting-sources ""`, `--strict-mcp-config`, a

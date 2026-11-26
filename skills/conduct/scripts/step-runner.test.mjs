@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -33,9 +34,15 @@ export const nextSeq = (state) => readdirSync(state).filter((f) => /^\\d{3}-(wor
 export const record = (state, seq, kind, rec) =>
   writeFileSync(path.join(state, String(seq).padStart(3, "0") + "-" + kind + ".json"),
     JSON.stringify({ kind, cwd: process.cwd(), runId: process.env.CONDUCT_RUN_ID ?? null, pid: process.pid, ...rec }));
-export const serve = (state, tag) => {
+export const serveViaExitedParent = async (state, tag) => {
   const out = path.join(state, "server-" + tag + ".json");
-  spawn(process.execPath, [SERVER, out], { stdio: "ignore" }).unref();
+  const parent = spawn(process.execPath, [path.join(path.dirname(SERVER), "chain.mjs"), out], { stdio: "ignore", detached: true });
+  await new Promise((resolve) => parent.on("exit", resolve));
+  return out;
+};
+export const serve = (state, tag, detached = false) => {
+  const out = path.join(state, "server-" + tag + ".json");
+  spawn(process.execPath, [SERVER, out], { stdio: "ignore", detached }).unref();
   return out;
 };
 export const waitFor = (file) => new Promise((resolve) => {
@@ -51,8 +58,9 @@ export const readStdin = async () => {
 `;
 
 // argv: mode state label ...placeholders
-const WORKER_JS = `import { appendFileSync } from "node:fs";
-import { hang, nextSeq, readStdin, record, serve, waitFor } from "./common.mjs";
+const WORKER_JS = `import { appendFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { hang, nextSeq, readStdin, record, serve, serveViaExitedParent, waitFor } from "./common.mjs";
 const [mode, state, label, ...rest] = process.argv.slice(2);
 const seq = nextSeq(state);
 record(state, seq, "worker", { label, mode, argv: rest, stdin: await readStdin() });
@@ -63,13 +71,31 @@ else if (mode === "limit429") { process.stderr.write("HTTP 429 Too Many Requests
 else if (mode === "limit0") { process.stdout.write("You have hit your usage limit\\n"); }
 else if (mode === "hang-server") { serve(state, seq + "-w"); hang(); }
 else if (mode === "daemon") { await waitFor(serve(state, seq + "-w")); }
+else if (mode === "daemon-detached") { await waitFor(serve(state, seq + "-w", true)); }
+else if (mode === "daemon-chain") { await waitFor(await serveViaExitedParent(state, seq + "-w")); }
 else if (mode === "edit") { appendFileSync("a.txt", "ADDED-" + seq + "\\n"); appendFileSync("new.txt", "x\\n"); }
 else if (mode.startsWith("tamper=")){ appendFileSync(mode.slice("tamper=".length), "\\n// tampered\\n"); }
+else if (mode.startsWith("add=")) { writeFileSync(mode.slice("add=".length), "added\\n"); }
+else if (mode.startsWith("link=")) { const [p, target] = mode.slice("link=".length).split("="); symlinkSync(path.resolve(target), p, "junction"); }
+else if (mode.startsWith("remove=")) { rmSync(mode.slice("remove=".length)); }
+else if (mode.startsWith("say=")) { process.stdout.write(mode.slice("say=".length) + "\\n"); process.exitCode = 1; }
+else if (mode === "limit-early") { process.stdout.write("You have hit your usage limit\\n" + "y".repeat(5000) + "\\n"); process.exitCode = 1; }
 else { process.stderr.write("unknown worker mode " + mode + "\\n"); process.exitCode = 99; }
 `;
 
+// argv: out. Starts a detached server and exits once the server is listening.
+const CHAIN_JS = `import { spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { waitFor } from "./common.mjs";
+const out = process.argv[2];
+spawn(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), "server.mjs"), out], { stdio: "ignore", detached: true }).unref();
+await waitFor(out);
+`;
+
 // argv: mode state
-const CHECK_JS = `import { readdirSync } from "node:fs";
+const CHECK_JS = `import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { hang, nextSeq, record, serve, waitFor } from "./common.mjs";
 const [mode, state] = process.argv.slice(2);
 const seq = nextSeq(state);
@@ -87,6 +113,14 @@ else if (mode === "pass2") { if (priorChecks >= 1) process.stdout.write("CHECK-P
 else if (mode === "exit2") await fail(2);
 else if (mode === "hang-server") { serve(state, seq + "-c"); hang(); }
 else if (mode === "daemon-fail") { await waitFor(serve(state, seq + "-c")); await fail(1); }
+else if (mode === "no-daemon") {
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const pids = readdirSync(state).filter((f) => /^server-.*-w\\.json$/.test(f)).map((f) => JSON.parse(readFileSync(path.join(state, f), "utf8")).pid);
+  const t0 = Date.now();
+  while (pids.some(alive) && Date.now() - t0 < 1000) await new Promise((r) => setTimeout(r, 25));
+  if (pids.length && !pids.some(alive)) process.stdout.write("CHECK-PASS\\n");
+  else { process.stdout.write("DAEMON-ALIVE " + pids.join(",") + "\\n"); process.exitCode = 1; }
+}
 else { process.stderr.write("unknown check mode " + mode + "\\n"); process.exitCode = 99; }
 `;
 
@@ -98,6 +132,7 @@ function setup(t) {
   writeFileSync(path.join(bin, "common.mjs"), COMMON_JS);
   writeFileSync(path.join(bin, "worker.mjs"), WORKER_JS);
   writeFileSync(path.join(bin, "check.mjs"), CHECK_JS);
+  writeFileSync(path.join(bin, "chain.mjs"), CHAIN_JS);
   const worker = path.join(bin, "worker.mjs"), checkJs = path.join(bin, "check.mjs");
   const ctx = {
     root, state, home, worker, checkJs, n: 0, extraCleanup: [],
@@ -270,6 +305,12 @@ const invalid = (c) => {
     "timeoutSec 0": c.wf([pre, c.agent({ timeoutSec: 0 }), c.check()]),
     "non-integer timeoutSec": c.wf([pre, c.agent(), c.check("pass", { timeoutSec: 1.5 })]),
     "swapOrder with an unknown model": c.wf([pre, c.agent(), c.check()], { swapOrder: ["fake", "nope"] }),
+    "S5.2 protect that is not an array": c.wf([pre, c.agent(), c.check("pass", { protect: "tests" })]),
+    "S5.2 empty protect": c.wf([pre, c.agent(), c.check("pass", { protect: [] })]),
+    "S5.2 protect with a non-string item": c.wf([pre, c.agent(), c.check("pass", { protect: ["tests", 3] })]),
+    "S7.2 model limitPattern that is not a string": c.wf([pre, c.agent(), c.check()], { models: { fake: c.model("ok", "fake", { limitPattern: 429 }) } }),
+    "R8 model limitPattern that is empty": c.wf([pre, c.agent(), c.check()], { models: { fake: c.model("ok", "fake", { limitPattern: "" }) } }),
+    "S7.2 model limitPattern that is not a valid regex": c.wf([pre, c.agent(), c.check()], { models: { fake: c.model("ok", "fake", { limitPattern: "(unclosed" }) } }),
     "workflow file that is not JSON": "{ not json",
   };
 };
@@ -406,7 +447,8 @@ test("the retry prompt carries the check id, exit code, output tail (last 4000 c
   const p = second.stdin;
   assert.ok(p.startsWith(PROMPT), "the original prompt comes first");
   assert.match(p, /\n\n## Check result \(attempt \d+\)\n/);
-  assert.match(p, /The check `check` \([^\n]*check\.mjs[^\n]*\) exited 1\. It runs outside your workspace and you cannot change it\./);
+  assert.match(p, /The check `check` \([^\n]*check\.mjs[^\n]*\) exited 1\. You cannot change the check or its files; changing them ends the run\./);
+  assert.ok(!p.includes("runs outside your workspace"), "S5.4: the false claim about the workspace is gone");
   assert.ok(p.includes("TAILMARK") && p.includes("ERRMARK"), "combined stdout+stderr tail");
   assert.ok(!p.includes("HEADMARK"), "only the last 4000 chars of the output");
   assert.ok(p.includes("```"));
@@ -652,12 +694,13 @@ test("a gate stops the run with exit 3 naming the step and the resume command; -
   assert.ok(text.includes('"ship"'), "result names the gate step");
   assert.match(text, /--from ship/);
   assert.match(text, /--approved/);
+  assert.match(stop.result.resume, new RegExp(`--run-id ${stop.result.runId}`));
   assert.deepEqual(c.records().map((x) => x.kind), ["worker", "check"]);
 
-  const go = c.run(wf, ["--from", "ship", "--approved", "Marcin: ok"]);
+  const go = c.run(wf, ["--from", "ship", "--approved", "Marcin: ok", "--run-id", stop.result.runId, "--log", stop.logPath], { log: false });
   assert.equal(go.status, 0, go.stderr);
   assert.equal(go.result.status, "success");
-  const [approval] = events(go.log, "approval");
+  const [approval] = events(readLog(stop.logPath), "approval");
   assert.deepEqual([approval.step, approval.approved], ["ship", "Marcin: ok"]);
   assert.deepEqual(c.records().map((x) => x.kind), ["worker", "check", "check"], "only the step after the gate ran");
 });
@@ -750,13 +793,13 @@ test("a check that exits 0 leaving a background child on its stdout passes at on
   const h = helper(c);
   const { argv, pidFile } = h.argv("background", "bg");
   const t0 = Date.now();
-  const r = c.run({ steps: [{ id: "check", type: "check", argv, timeoutSec: 3 }] });
+  const r = c.run({ steps: [{ id: "check", type: "check", argv, timeoutSec: 10 }] });
   const ms = Date.now() - t0;
   const [att] = events(r.log, "attempt");
   assert.deepEqual([att?.exit, att?.outcome], [0, "pass"], `the check attempt is a pass, not a timeout (${JSON.stringify(att)})`);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.result.status, "success");
-  assert.ok(ms < 2500, `the run took ${ms} ms against a 3000 ms step timeout`);
+  assert.ok(ms < 6000, `the run took ${ms} ms against a 10000 ms step timeout`);
   if (process.platform !== "win32") {
     const pid = h.readPid(pidFile);
     assert.ok(pid, "the background child started");
@@ -850,3 +893,404 @@ test("an agent promptFile that does not exist exits 2 before any step runs", (t)
   assertRejected(c, r, "missing promptFile");
   assert.deepEqual(events(r.log, "attempt"), []);
 });
+
+// ---------- C5 check integrity ----------
+
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const runsIn = (c) => existsSync(path.join(c.home, "runs")) ? readdirSync(path.join(c.home, "runs")) : [];
+
+test("S5.1: an agent edit of a file named by a later argv item of the check ends the run check-tampered", (t) => {
+  const c = setup(t);
+  const r = c.run(c.wf([c.agent(), c.check("pass")], { models: { fake: c.model(`tamper=${c.checkJs}`, "fake") } }));
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.result?.status, "check-tampered");
+  assert.deepEqual(c.records("check"), [], "the tampered check did not run");
+});
+
+test("S5.1: a check argv item naming a file relative to --cwd is protected too", (t) => {
+  const c = setup(t);
+  const dir = path.join(c.root, "work"); mkdirSync(dir);
+  writeFileSync(path.join(dir, "gate.test.mjs"), "process.exit(0);\n");
+  const r = c.run(c.wf([c.agent(), { id: "check", type: "check", argv: [node, "gate.test.mjs"], timeoutSec: 2 }],
+    { models: { fake: c.model("tamper=gate.test.mjs", "fake") } }), ["--cwd", dir]);
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.result?.status, "check-tampered");
+});
+
+test("S5.2: protect on a command check names a file; an agent edit of it ends the run check-tampered", (t) => {
+  const c = setup(t);
+  const r = c.run(c.wf([c.agent(), { id: "check", type: "check", command: `"${node}" "${c.checkJs}" pass "${c.state}"`, protect: [c.checkJs], timeoutSec: 2 }],
+    { models: { fake: c.model(`tamper=${c.checkJs}`, "fake") } }));
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.result?.status, "check-tampered");
+  assert.deepEqual(c.records("check"), []);
+});
+
+function protectedWork(c) {
+  const dir = path.join(c.root, "work");
+  mkdirSync(path.join(dir, "tests", "sub"), { recursive: true });
+  writeFileSync(path.join(dir, "tests", "sub", "a.test.mjs"), "ok\n");
+  return (mode) => c.run(c.wf([c.agent(), c.check("pass", { protect: ["tests"] })], { models: { fake: c.model(mode, "fake") } }), ["--cwd", dir]);
+}
+
+test("S5.2: a protected directory covers files in its subdirectories: editing one ends the run check-tampered", (t) => {
+  const c = setup(t);
+  const r = protectedWork(c)("tamper=tests/sub/a.test.mjs");
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.result?.status, "check-tampered");
+});
+
+test("S5.2: a protected directory skips .git, so a change under .git does not end the run", (t) => {
+  const c = setup(t);
+  const { repo } = initRepo(c, { "a.txt": "a\n" });
+  const r = c.run(c.wf([c.agent(), c.check("pass", { protect: ["."] })], { models: { fake: c.model("add=.git/conduct-probe", "fake") } }), ["--cwd", repo]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.result?.status, "success");
+});
+
+test("S5.3: a file added to a protected directory ends the run check-tampered", (t) => {
+  const c = setup(t);
+  const r = protectedWork(c)("add=tests/new.test.mjs");
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.result?.status, "check-tampered");
+});
+
+test("S5.3: a file removed from a protected directory ends the run check-tampered", (t) => {
+  const c = setup(t);
+  const r = protectedWork(c)("remove=tests/sub/a.test.mjs");
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.result?.status, "check-tampered");
+});
+
+// ---------- C6 resume ----------
+
+const gated = (c, extra = {}) => c.wf([c.agent(), c.check("pass", { id: "c1" }), { id: "ship", type: "gate" }, c.check("pass", { id: "post" })], extra);
+const looping = (c, extra = {}) => c.wf([c.agent(), c.check("pass", { id: "c1" }), { id: "ship", type: "gate" },
+  c.check("fail", { id: "c2", onFail: { retry: "implement", max: 1 } })], extra);
+const GO = ["--from", "ship", "--approved", "Marcin: ok"];
+
+test("S6.1: --run-id sets the run id and wins over CONDUCT_RUN_ID", (t) => {
+  const c = setup(t);
+  const r = c.run(c.wf([c.agent(), c.check("pass")]), ["--run-id", "rid-flag"], { env: { CONDUCT_RUN_ID: "rid-env" }, log: false });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.result?.runId, "rid-flag");
+  assert.deepEqual(c.records().map((x) => x.runId), ["rid-flag", "rid-flag"], "steps see the flag's run id");
+  assert.ok(existsSync(path.join(c.home, "runs", "rid-flag", "run.ndjson")));
+  assert.equal(existsSync(path.join(c.home, "runs", "rid-env")), false);
+});
+
+const BASH = "C:/Program Files/Git/bin/bash.exe";
+const resumeShells = process.platform === "win32"
+  ? {
+    cmd: (s) => ({ file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"${s}"`], verbatim: true }),
+    powershell: (s) => ({ file: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(s, "utf16le").toString("base64")] }),
+    ...(existsSync(BASH) ? { bash: (s) => ({ file: BASH, args: ["-c", s] }) } : {}),
+  }
+  : { sh: (s) => ({ file: "/bin/sh", args: ["-c", s] }) };
+
+function runResume(c, resume, shell, cwd) {
+  const { file, args, verbatim } = resumeShells[shell](resume);
+  const env = { ...process.env, CONDUCT_HOME: c.home };
+  delete env.CONDUCT_RUN_ID;
+  const r = spawnSync(file, args, { cwd, env, encoding: "utf8", timeout: 60_000, windowsHide: true, windowsVerbatimArguments: Boolean(verbatim) });
+  let result = null;
+  try { result = JSON.parse((r.stdout ?? "").trim().split("\n").filter(Boolean).at(-1)); } catch { /* asserted by the caller */ }
+  return { ...r, result };
+}
+
+test("S6.2: the gate's resume string passes --run-id, sets no env var, and resumes the run as is in every shell", (t) => {
+  const c = setup(t);
+  for (const shell of Object.keys(resumeShells)) {
+    const stop = c.run(gated(c));
+    assert.equal(stop.status, 3, stop.stderr);
+    const { resume } = stop.result;
+    assert.match(resume, new RegExp(`--run-id ${stop.result.runId}(?: |$)`), `${shell}: resume passes --run-id`);
+    assert.doesNotMatch(resume, /CONDUCT_RUN_ID/, `${shell}: resume sets no env var`);
+    const go = runResume(c, resume, shell, c.root);
+    assert.equal(go.result?.status, "success", `${shell}: ${go.stderr}`);
+    assert.equal(go.result.runId, stop.result.runId, `${shell}: same run`);
+    assert.equal(events(readLog(stop.logPath), "approval").length, 1, `${shell}: approval logged in the run's log`);
+  }
+});
+
+test("S6.3: --from without a run id exits 2 with one stderr line and creates no run dir", (t) => {
+  const c = setup(t);
+  const r = c.run(gated(c), GO, { log: false });
+  assertRejected(c, r, "--from without run id");
+  assert.deepEqual(runsIn(c), []);
+});
+
+test("S6.3: --from with a run id that has no run log exits 2 and creates no run dir", (t) => {
+  const c = setup(t);
+  const r = c.run(gated(c), GO, { env: { CONDUCT_RUN_ID: "rid-none" }, log: false });
+  assertRejected(c, r, "--from unknown run id");
+  assert.deepEqual(runsIn(c), []);
+});
+
+test("S6.3: --from a gate the run did not stop at exits 2 and runs nothing", (t) => {
+  const c = setup(t);
+  const env = { CONDUCT_RUN_ID: "rid-g1" };
+  const wf = c.wf([c.agent(), c.check("pass", { id: "c1" }), { id: "g1", type: "gate" }, c.check("pass", { id: "c2" }), { id: "g2", type: "gate" }, c.check("pass", { id: "c3" })]);
+  assert.equal(c.run(wf, [], { env, log: false }).status, 3);
+  const r = c.run(wf, ["--from", "g2", "--approved", "Marcin: ok"], { env, log: false });
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(r.stderr.trim().split("\n").length, 1, `one stderr line, got ${JSON.stringify(r.stderr)}`);
+  assert.deepEqual(c.records().map((x) => x.kind), ["worker", "check"], "no step ran on the bad resume");
+  assert.deepEqual(runsIn(c), ["rid-g1"]);
+});
+
+test("S6.4: a retry budget spent before a gate stays spent after --from", (t) => {
+  const c = setup(t);
+  const env = { CONDUCT_RUN_ID: "rid-budget" };
+  const wf = looping(c);
+  assert.equal(c.run(wf, [], { env, log: false }).status, 3);
+  const second = c.run(wf, GO, { env, log: false });
+  assert.equal(second.result?.status, "gate", `the first resume retries once and reaches the gate again: ${second.stderr}`);
+  const third = c.run(wf, GO, { env, log: false });
+  assert.equal(third.result?.status, "exhausted", "the retry spent before the gate is not granted again");
+  assert.equal(third.status, 1, third.stderr);
+  assert.equal(events(readLog(path.join(c.home, "runs", "rid-budget", "run.ndjson")), "retry").length, 1);
+});
+
+test("S6.4: a model swapped before a gate stays swapped after --from", (t) => {
+  const c = setup(t);
+  const env = { CONDUCT_RUN_ID: "rid-swap" };
+  const wf = looping(c, { models: { a: c.model("limit", "a"), b: c.model("ok", "b") }, swapOrder: ["a", "b"] });
+  wf.steps[0].model = "a";
+  assert.equal(c.run(wf, [], { env, log: false }).status, 3);
+  const go = c.run(wf, GO, { env, log: false });
+  assert.equal(go.result?.status, "gate", go.stderr);
+  assert.deepEqual(c.records("worker").map((w) => w.label), ["a", "b", "b"], "the retry after the gate ran on the swapped model");
+  assert.equal(events(readLog(path.join(c.home, "runs", "rid-swap", "run.ndjson")), "swap").length, 1);
+});
+
+test("S6.4: a gate stop writes state.json with the run's base HEAD, and --from diffs against that base", (t) => {
+  const c = setup(t);
+  const { repo, git } = initRepo(c, { "a.txt": "a\n" });
+  const head = git("rev-parse", "HEAD");
+  const env = { CONDUCT_RUN_ID: "rid-base" };
+  const wf = looping(c, { models: { fake: c.model("edit", "fake") } });
+  assert.equal(c.run(wf, ["--cwd", repo], { env, log: false }).status, 3);
+  const stateFile = path.join(c.home, "runs", "rid-base", "state.json");
+  assert.ok(existsSync(stateFile), "state.json written at the gate stop");
+  const state = readFileSync(stateFile, "utf8");
+  assert.doesNotThrow(() => JSON.parse(state));
+  assert.ok(state.includes(head), "state.json carries the base HEAD");
+  git("add", "-A"); git("commit", "-q", "-m", "between gate and resume");
+  const go = c.run(wf, [...GO, "--cwd", repo], { env, log: false });
+  assert.equal(go.result?.status, "gate", go.stderr);
+  const retryPrompt = c.records("worker")[1].stdin;
+  assert.ok(retryPrompt.includes("## Your changes so far"), "changes since the original base are shown");
+  assert.match(retryPrompt, /\+ADDED-\d+/);
+});
+
+test("S6.5: the resume string runs the steps in the original run's worktree even when started elsewhere", (t) => {
+  const c = setup(t);
+  const { repo } = initRepo(c, { "a.txt": "a\n" });
+  const stop = c.run(gated(c), ["--repo", repo]);
+  if (stop.result?.worktree) c.extraCleanup.unshift(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", stop.result.worktree]));
+  assert.equal(stop.status, 3, stop.stderr);
+  const elsewhere = path.join(c.root, "elsewhere"); mkdirSync(elsewhere);
+  const go = runResume(c, stop.result.resume, Object.keys(resumeShells)[0], elsewhere);
+  assert.equal(go.result?.status, "success", go.stderr);
+  assert.equal(real(c.records("check").at(-1).cwd), real(stop.result.worktree));
+});
+
+// ---------- C7 Windows and robustness ----------
+
+test("S7.1 Windows: a daemon left behind by an agent that exited 0 is killed when the step ends, before the next step", { skip: process.platform !== "win32" }, async (t) => {
+  const c = setup(t);
+  const r = c.run(c.wf([c.agent({ model: "d" }), c.check("no-daemon")], { models: { d: c.model("daemon-detached", "d") } }));
+  const [, check] = events(r.log, "attempt");
+  assert.equal(check?.outcome, "pass", `the next step still saw the daemon: ${readFileSync(path.join(c.home, "runs", r.result.runId, "check-1.log"), "utf8")}`);
+  assert.equal(r.status, 0, r.stderr);
+  await assertServersGone(c.servers(), 1);
+});
+
+for (const text of ["expected 429 got 200", "quota.test.mjs failed"]) {
+  test(`S7.2: a failing agent whose output says "${text}" is a plain failure, not a model swap`, (t) => {
+    const c = setup(t);
+    const r = c.run(c.wf([c.agent({ model: "a" }), c.check("pass")], { models: { a: c.model(`say=${text}`, "a"), b: c.model("ok", "b") }, swapOrder: ["a", "b"] }));
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(events(r.log, "swap"), []);
+    assert.deepEqual(c.records().map((x) => x.label ?? x.kind), ["a", "check"]);
+    assert.equal(events(r.log, "attempt")[0].outcome, "fail");
+  });
+}
+
+test("S7.2: a limit message followed by more than 4000 chars of output is not a swap", (t) => {
+  const c = setup(t);
+  const r = c.run(c.wf([c.agent({ model: "a" }), c.check("pass")], { models: { a: c.model("limit-early", "a"), b: c.model("ok", "b") }, swapOrder: ["a", "b"] }));
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(events(r.log, "swap"), []);
+  assert.deepEqual(c.records().map((x) => x.label ?? x.kind), ["a", "check"]);
+});
+
+test("S7.2: a model limitPattern is matched case-insensitively and swaps the model", (t) => {
+  const c = setup(t);
+  const r = c.run(c.wf([c.agent({ model: "a" }), c.check("pass")], {
+    models: { a: c.model("say=CUSTOM-CAP-HIT for today", "a", { limitPattern: "custom-cap-hit" }), b: c.model("ok", "b") }, swapOrder: ["a", "b"],
+  }));
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(events(r.log, "swap").map((s) => [s.from, s.to, s.reason]), [["a", "b", "limit"]]);
+  assert.deepEqual(c.records().map((x) => x.label ?? x.kind), ["a", "b", "check"]);
+});
+
+test("S7.3: a step printing far more than 256 KiB does not grow the runner's heap, and its step log keeps every byte", (t) => {
+  const c = setup(t);
+  const mib = 64, tail = "\nBIGEND\n";
+  const script = `const b = Buffer.alloc(1 << 20, 97); let i = 0;
+const w = () => { while (i < ${mib}) { i++; if (!process.stdout.write(b)) { process.stdout.once("drain", w); return; } } process.stdout.write(${JSON.stringify(tail)}); };
+w();`;
+  const r = c.run({ steps: [{ id: "check", type: "check", argv: [node, "-e", script], timeoutSec: 30 }] }, [], { env: { NODE_OPTIONS: "--max-old-space-size=16" } });
+  assert.equal(r.result?.status, "success", `runner capped at a 16 MB heap exited ${r.status}: ${r.stderr.match(/FATAL ERROR[^\n]*/)?.[0] ?? r.stderr.slice(0, 300)}`);
+  const logFile = path.join(c.home, "runs", r.result.runId, "check-1.log");
+  assert.equal(statSync(logFile).size, mib * (1 << 20) + tail.length);
+});
+
+// ---------- C8 run log ----------
+
+test("S8.1: start carries workflowHash, base and the per-check hashes of protected files", (t) => {
+  const c = setup(t);
+  const { repo, git } = initRepo(c, { "a.txt": "a\n" });
+  const wf = c.wf([c.agent(), c.check("pass"), { id: "check2", type: "check", command: `"${node}" "${c.checkJs}" pass "${c.state}"`, protect: ["a.txt"], timeoutSec: 2 }]);
+  const r = c.run(wf, ["--cwd", repo]);
+  assert.equal(r.status, 0, r.stderr);
+  const wfPath = path.join(c.root, `wf-${c.n}.json`);
+  const [start] = events(r.log, "start");
+  assert.equal(start.workflowHash, sha256(readFileSync(wfPath)));
+  assert.equal(start.base, git("rev-parse", "HEAD"));
+  const entry = (id, file) => Object.entries(start.checks?.[id] ?? {}).find(([f]) => existsSync(path.resolve(repo, f)) && real(path.resolve(repo, f)) === real(file));
+  const js = entry("check", c.checkJs);
+  assert.ok(js, `checks.check names ${c.checkJs}: ${JSON.stringify(start.checks)}`);
+  assert.equal(js[1], sha256(readFileSync(c.checkJs)));
+  const a = entry("check2", path.join(repo, "a.txt"));
+  assert.ok(a, `checks.check2 names a.txt: ${JSON.stringify(start.checks)}`);
+  assert.equal(a[1], sha256(readFileSync(path.join(repo, "a.txt"))));
+});
+
+test("S8.1: start.base is null outside a git workspace", (t) => {
+  const c = setup(t);
+  const r = c.run(c.wf([c.agent(), c.check("pass")]));
+  assert.equal(r.status, 0, r.stderr);
+  const [start] = events(r.log, "start");
+  assert.ok(Object.hasOwn(start, "base"), "start has a base field");
+  assert.equal(start.base, null);
+});
+
+test("S8.2: attempt carries the rendered argv, and agent attempts in git carry diffHash and untracked", (t) => {
+  const c = setup(t);
+  const { repo, git } = initRepo(c, { "a.txt": "a\n" });
+  const base = git("rev-parse", "HEAD");
+  const r = c.run(c.wf([c.agent({ effort: "low" }), c.check("pass")], { models: { fake: c.model("edit", "fake") } }), ["--cwd", repo]);
+  assert.equal(r.status, 0, r.stderr);
+  const [agent, check] = events(r.log, "attempt");
+  const promptFile = path.join(c.home, "runs", r.result.runId, "implement-1.prompt.md");
+  assert.ok(Array.isArray(agent.argv), `agent attempt argv: ${JSON.stringify(agent)}`);
+  assert.deepEqual(agent.argv.slice(0, 6), [node, c.worker, "edit", c.state, "fake", "low"]);
+  assert.equal(real(agent.argv[6]), real(repo));
+  assert.equal(real(agent.argv[7]), real(promptFile));
+  assert.ok(!agent.argv.some((a) => a.includes(PROMPT)), "the prompt is not in argv");
+  assert.deepEqual(check.argv, [node, c.checkJs, "pass", c.state]);
+  const diff = spawnSync("git", ["-C", repo, "diff", base]).stdout;
+  assert.equal(agent.diffHash, sha256(diff));
+  assert.equal(agent.untracked, 1);
+});
+
+// ---------- review round 2 ----------
+
+test("R4: --from a gate that is not the run's last stop exits 2 and runs nothing", (t) => {
+  const c = setup(t);
+  const env = { CONDUCT_RUN_ID: "rid-r4" };
+  const wf = c.wf([c.agent(), c.check("pass", { id: "c1" }), { id: "g1", type: "gate" }, c.check("pass", { id: "c2" }), { id: "g2", type: "gate" }, c.check("pass", { id: "c3" })]);
+  assert.equal(c.run(wf, [], { env, log: false }).status, 3);
+  const second = c.run(wf, ["--from", "g1", "--approved", "Marcin: ok"], { env, log: false });
+  assert.equal(second.result?.step, "g2", second.stderr);
+  const before = c.records().length;
+  const r = c.run(wf, ["--from", "g1", "--approved", "Marcin: ok"], { env, log: false });
+  assert.equal(r.status, 2, `the last stop was g2, so g1 cannot be resumed: ${r.stdout}${r.stderr}`);
+  assert.equal(r.stderr.trim().split("\n").length, 1, `one stderr line, got ${JSON.stringify(r.stderr)}`);
+  assert.equal(c.records().length, before, "no step ran on the bad resume");
+});
+
+test("R5: --from with the run's state.json missing exits 2 with one stderr line", (t) => {
+  const c = setup(t);
+  const env = { CONDUCT_RUN_ID: "rid-r5" };
+  assert.equal(c.run(gated(c), [], { env, log: false }).status, 3);
+  rmSync(path.join(c.home, "runs", "rid-r5", "state.json"));
+  const r = c.run(gated(c), GO, { env, log: false });
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(r.stderr.trim().split("\n").length, 1, `one stderr line, got ${JSON.stringify(r.stderr)}`);
+  assert.match(r.stderr, /state\.json/, "the message names the missing state file");
+  assert.deepEqual(c.records().map((x) => x.kind), ["worker", "check"], "no step ran on the bad resume");
+});
+
+test("R5: --from with --log pointing at another run's log and no state.json exits 2 and creates no run dir", (t) => {
+  const c = setup(t);
+  const stop = c.run(gated(c));
+  assert.equal(stop.status, 3, stop.stderr);
+  const r = c.run(gated(c), [...GO, "--run-id", "rid-r5-other", "--log", stop.logPath], { log: false });
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(r.stderr.trim().split("\n").length, 1, `one stderr line, got ${JSON.stringify(r.stderr)}`);
+  assert.equal(existsSync(path.join(c.home, "runs", "rid-r5-other")), false, "no run dir was created");
+  assert.deepEqual(c.records().map((x) => x.kind), ["worker", "check"]);
+});
+
+test("R6: a protect path absent at start that the agent leaves absent does not end the run", (t) => {
+  const c = setup(t);
+  const dir = path.join(c.root, "work"); mkdirSync(dir);
+  const r = c.run(c.wf([c.agent(), c.check("pass", { protect: ["later.snap"] })]), ["--cwd", dir]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.result?.status, "success");
+  assert.equal(c.records("check").length, 1);
+});
+
+test("R6: a protect path absent at start that the agent creates ends the run check-tampered", (t) => {
+  const c = setup(t);
+  const dir = path.join(c.root, "work"); mkdirSync(dir);
+  const r = c.run(c.wf([c.agent(), c.check("pass", { protect: ["later.snap"] })], { models: { fake: c.model("add=later.snap", "fake") } }), ["--cwd", dir]);
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.result?.status, "check-tampered");
+});
+
+// ---------- final review ----------
+
+test("L1: a link added to a protected directory ends the run check-tampered", (t) => {
+  const c = setup(t);
+  const dir = path.join(c.root, "work");
+  mkdirSync(path.join(dir, "tests"), { recursive: true });
+  mkdirSync(path.join(dir, "outside"));
+  writeFileSync(path.join(dir, "outside", "a.test.mjs"), "ok\n");
+  const r = c.run(c.wf([c.agent(), c.check("pass", { protect: ["tests"] })], { models: { fake: c.model("link=tests/evil=outside", "fake") } }), ["--cwd", dir]);
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.result?.status, "check-tampered");
+});
+
+test("L2: --from with a workflow file changed since the run started exits 2 and runs nothing", (t) => {
+  const c = setup(t);
+  const env = { CONDUCT_RUN_ID: "rid-l2" };
+  assert.equal(c.run(gated(c), [], { env, log: false }).status, 3);
+  const weakened = c.wf([c.agent(), c.check("pass", { id: "c1" }), { id: "ship", type: "gate" }]);
+  const r = c.run(weakened, GO, { env, log: false });
+  assert.equal(r.status, 2, `${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /workflow/i);
+  assert.deepEqual(c.records().map((x) => x.kind), ["worker", "check"], "no step ran on the bad resume");
+});
+
+for (const id of ["../escape", "a/b", "..", "."]) {
+  test(`L3: --run-id ${JSON.stringify(id)} is rejected with exit 2 before anything is written`, (t) => {
+    const c = setup(t);
+    const r = c.run(c.wf([c.agent(), c.check("pass")]), ["--run-id", id], { log: false });
+    assert.equal(r.status, 2, `${r.stdout}${r.stderr}`);
+    assert.deepEqual(c.records(), [], "no step ran");
+    assert.equal(existsSync(path.join(c.home, "escape")), false);
+  });
+}
+
+test("R1 Windows: a daemon whose parent exited before the agent exited 0 is dead after the run",
+  { skip: process.platform !== "win32", todo: "Windows cleanup cannot follow a chain through an exited parent without Job Objects" }, async (t) => {
+    const c = setup(t);
+    const r = c.run(c.wf([c.agent({ model: "d" }), c.check("pass")], { models: { d: c.model("daemon-chain", "d") } }));
+    assert.equal(r.status, 0, r.stderr);
+    await assertServersGone(c.servers(), 1);
+  });

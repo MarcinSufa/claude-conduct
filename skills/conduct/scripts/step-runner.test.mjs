@@ -63,7 +63,8 @@ else if (mode === "limit429") { process.stderr.write("HTTP 429 Too Many Requests
 else if (mode === "limit0") { process.stdout.write("You have hit your usage limit\\n"); }
 else if (mode === "hang-server") { serve(state, seq + "-w"); hang(); }
 else if (mode === "daemon") { await waitFor(serve(state, seq + "-w")); }
-else if (mode.startsWith("tamper=")) { appendFileSync(mode.slice("tamper=".length), "\\n// tampered\\n"); }
+else if (mode === "edit") { appendFileSync("a.txt", "ADDED-" + seq + "\\n"); appendFileSync("new.txt", "x\\n"); }
+else if (mode.startsWith("tamper=")){ appendFileSync(mode.slice("tamper=".length), "\\n// tampered\\n"); }
 else { process.stderr.write("unknown worker mode " + mode + "\\n"); process.exitCode = 99; }
 `;
 
@@ -412,6 +413,21 @@ test("the retry prompt carries the check id, exit code, output tail (last 4000 c
   assert.ok(p.trimEnd().endsWith("Do not ask questions. Fix the code so the check passes, or exit with a one-line reason why you cannot."));
   const promptFile = path.join(c.home, "runs", r.result.runId, "implement-2.prompt.md");
   assert.equal(readFileSync(promptFile, "utf8"), p);
+  assert.ok(!p.includes("## Your changes so far"), "no changes section outside a git repo");
+});
+
+test("the retry prompt shows the changes earlier attempts left in the workspace, so a retry does not redo them", (t) => {
+  const c = setup(t);
+  const { repo } = initRepo(c, { "a.txt": "a\n" });
+  const r = c.run(c.wf([c.agent(), c.check("fail", { onFail: { retry: "implement", max: 2 } })], { models: { fake: c.model("edit", "fake") } }), ["--repo", repo]);
+  if (r.result?.worktree) c.extraCleanup.unshift(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", r.result.worktree]));
+  assert.equal(r.result.status, "exhausted", r.stderr);
+  const [first, second, third] = c.records("worker").map((w) => w.stdin);
+  assert.ok(!first.includes("## Your changes so far"));
+  assert.ok(second.indexOf("## Your changes so far") > second.indexOf(PROMPT) && second.indexOf("## Your changes so far") < second.indexOf("## Check result"));
+  assert.match(second, /\+ADDED-0\n/);
+  assert.match(second, /Untracked files:\nnew\.txt\n/);
+  assert.match(third, /\+ADDED-0\n\+ADDED-2\n/, "the diff covers every attempt since the run started");
 });
 
 // ---------- run id ----------

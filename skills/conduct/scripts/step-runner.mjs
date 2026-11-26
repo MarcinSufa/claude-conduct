@@ -141,10 +141,19 @@ function runChild(argv, opts) {
   });
 }
 
+function workspaceChanges(cwd, base) {
+  if (!base) return "";
+  const git = (...a) => spawnSync("git", ["-C", cwd, ...a], { encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024 }).stdout ?? "";
+  const diff = git("diff", base), untracked = git("ls-files", "--others", "--exclude-standard");
+  if (!diff && !untracked) return "";
+  const shown = diff.length > 8000 ? `${diff.slice(0, 8000)}\n[diff truncated, ${diff.length} chars in total]\n` : diff;
+  return `\n\n## Your changes so far\nEarlier attempts in this run already changed the workspace. Build on them, do not redo them.\n\`\`\`diff\n${shown}\`\`\`\n${untracked ? `Untracked files:\n${untracked}` : ""}`;
+}
+
 function promptFor(step, workflowDir, retry) {
   let prompt = step.prompt;
   if (step.promptFile) prompt = readFileSync(path.resolve(workflowDir, step.promptFile), "utf8");
-  return prompt + (retry ? `\n\n## Check result (attempt ${retry.n})\nThe check \`${retry.check}\` (${retry.description}) exited ${retry.exit}. It runs outside your workspace and you cannot change it.\n\`\`\`\n${retry.output.slice(-4000)}\n\`\`\`\nDo not ask questions. Fix the code so the check passes, or exit with a one-line reason why you cannot.` : "");
+  return prompt + (retry?.changes ?? "") + (retry ?`\n\n## Check result (attempt ${retry.n})\nThe check \`${retry.check}\` (${retry.description}) exited ${retry.exit}. It runs outside your workspace and you cannot change it.\n\`\`\`\n${retry.output.slice(-4000)}\n\`\`\`\nDo not ask questions. Fix the code so the check passes, or exit with a one-line reason why you cannot.` : "");
 }
 
 export async function runWorkflow(wf, options = {}) {
@@ -170,6 +179,8 @@ export async function runWorkflow(wf, options = {}) {
     if (git.status !== 0) throw new Error((git.stderr || "git worktree add failed").trim());
     cwd = worktree;
   }
+  const head = spawnSync("git", ["-C", cwd, "rev-parse", "--verify", "HEAD"], { encoding: "utf8", windowsHide: true });
+  const base = head.status === 0 ? head.stdout.trim() : null;
   const runDir = path.join(homeRoot(), "runs", runId);
   mkdirSync(runDir, { recursive: true });
   const logFile = options.log ?? path.join(runDir, "run.ndjson");
@@ -241,7 +252,7 @@ export async function runWorkflow(wf, options = {}) {
         retries[step.id]++;
         const retry = wf.steps.find((s) => s.id === f.retry);
         const output = result.output;
-        retryInfo[retry.id] = { n: runs[step.id], check: step.id, description: step.argv ? step.argv.join(" ") : step.command, exit: result.exit, output };
+        retryInfo[retry.id] = { n: runs[step.id], check: step.id, description: step.argv ? step.argv.join(" ") : step.command, exit: result.exit, output, changes: workspaceChanges(cwd, base) };
         event(logFile, runId, "retry", { check: step.id, n: retries[step.id], to: f.retry });
         idx = idsIndex(wf.steps, f.retry); continue;
       }

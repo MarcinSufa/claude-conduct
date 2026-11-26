@@ -20,7 +20,7 @@
 `steps` must be a non-empty list with unique non-empty `id` values. Step types are `agent`, `check`, and `gate`.
 
 - An `agent` names a model and has exactly one of `prompt` or `promptFile`. A relative prompt file is resolved from the workflow file's directory. It can specify `effort` and positive-integer `timeoutSec` (default 1800). Every agent must be followed immediately by a check. The runner writes each rendered prompt to `<runDir>/<step>-<attempt>.prompt.md`.
-- A `check` has exactly one of a non-empty string-array `argv` or string `command`; commands run through the platform shell. Its timeout defaults to 600 seconds. A check can have `onFail: { "retry": "earlier-step-id", "max": 2, "retryOn": [1] }`. `max` is the number of retries, and omitted `retryOn` retries any non-zero exit. The retry prompt is the original prompt plus only the latest check result section and the last 4000 combined output characters.
+- A `check` has exactly one of a non-empty string-array `argv` or string `command`; commands run through the platform shell. Its timeout defaults to 600 seconds. A check can have `onFail: { "retry": "earlier-step-id", "max": 2, "retryOn": [1] }`. `max` is the number of retries, and omitted `retryOn` retries any non-zero exit. The retry prompt is the original prompt, then, when the workspace is a git repo, a "Your changes so far" section (`git diff` against the HEAD the run started from, first 8000 characters, plus untracked file names), then only the latest check result section and the last 4000 combined output characters.
 - A `gate` may have a prompt. It pauses the workflow unless resumed with approval; gates are the only pause point.
 
 ## Models and swaps

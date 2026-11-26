@@ -1089,7 +1089,7 @@ test("S6.5: the resume string runs the steps in the original run's worktree even
   const { repo } = initRepo(c, { "a.txt": "a\n" });
   const stop = c.run(gated(c), ["--repo", repo]);
   if (stop.result?.worktree) c.extraCleanup.unshift(() => spawnSync("git", ["-C", repo, "worktree", "remove", "--force", stop.result.worktree]));
-  assert.equal(stop.status, 3, stop.stderr);
+  assert.equal(stop.status, 3, `stdout=${stop.stdout} stderr=${stop.stderr} log=${JSON.stringify(stop.log.slice(-3))}`);
   const elsewhere = path.join(c.root, "elsewhere"); mkdirSync(elsewhere);
   const go = runResume(c, stop.result.resume, Object.keys(resumeShells)[0], elsewhere);
   assert.equal(go.result?.status, "success", go.stderr);

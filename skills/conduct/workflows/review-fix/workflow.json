@@ -1,0 +1,87 @@
+{
+  "steps": [
+    {
+      "id": "review",
+      "type": "agent",
+      "model": "luna",
+      "effort": "high",
+      "promptFile": "review.md",
+      "timeoutSec": 1800
+    },
+    {
+      "id": "review-written",
+      "type": "check",
+      "argv": [
+        "node",
+        "-e",
+        "const fs = require('fs'), f = '.conduct/review-' + process.env.CONDUCT_RUN_ID + '.md'; if (!fs.existsSync(f)) { console.log('missing ' + f); process.exit(2); } console.log(fs.readFileSync(f, 'utf8'));"
+      ],
+      "timeoutSec": 30
+    },
+    {
+      "id": "fix",
+      "type": "agent",
+      "model": "opus",
+      "effort": "medium",
+      "promptFile": "fix.md",
+      "timeoutSec": 1800
+    },
+    {
+      "id": "tests",
+      "type": "check",
+      "command": "npm test",
+      "timeoutSec": 600,
+      "protect": [
+        "package.json"
+      ],
+      "onFail": {
+        "retry": "fix",
+        "max": 2
+      }
+    },
+    {
+      "id": "clear-review",
+      "type": "check",
+      "argv": [
+        "node",
+        "-e",
+        "const fs = require('fs'), f = '.conduct/review-' + process.env.CONDUCT_RUN_ID + '.md'; fs.rmSync(f, { force: true });"
+      ],
+      "timeoutSec": 30
+    },
+    {
+      "id": "rereview",
+      "type": "agent",
+      "model": "luna",
+      "effort": "high",
+      "promptFile": "review.md",
+      "timeoutSec": 1800
+    },
+    {
+      "id": "clean",
+      "type": "check",
+      "argv": [
+        "node",
+        "-e",
+        "const fs = require('fs'), f = '.conduct/review-' + process.env.CONDUCT_RUN_ID + '.md'; if (!fs.existsSync(f)) { console.log('missing ' + f); process.exit(2); } const t = fs.readFileSync(f, 'utf8'); if (t.trim() === 'NO FINDINGS') process.exit(0); console.log(t); process.exit(1);"
+      ],
+      "timeoutSec": 30,
+      "onFail": {
+        "retry": "fix",
+        "max": 2,
+        "retryOn": [
+          1
+        ]
+      }
+    },
+    {
+      "id": "approve",
+      "type": "gate",
+      "prompt": "Read the diff and the fix log, then approve before committing."
+    }
+  ],
+  "swapOrder": [
+    "luna",
+    "opus"
+  ]
+}

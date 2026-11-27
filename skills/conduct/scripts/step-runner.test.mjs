@@ -1294,3 +1294,72 @@ test("R1 Windows: a daemon whose parent exited before the agent exited 0 is dead
     assert.equal(r.status, 0, r.stderr);
     await assertServersGone(c.servers(), 1);
   });
+
+// ---------- review-fix workflow ----------
+
+const REVIEW_FIX = fileURLToPath(new URL("../workflows/review-fix/workflow.json", import.meta.url));
+
+// argv: role mode state. role review writes the review file; role fix records the findings it was given.
+const RF_JS = `import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+const [role, mode, state] = process.argv.slice(2);
+const n = readdirSync(state).filter((f) => f.startsWith(role + "-")).length + 1;
+const file = path.join(".conduct", "review-" + process.env.CONDUCT_RUN_ID + ".md");
+writeFileSync(path.join(state, role + "-" + n), existsSync(file) ? readFileSync(file, "utf8") : "<none>");
+mkdirSync(".conduct", { recursive: true });
+const findings = "1. src/a.js:3 drops the last item\\n";
+if (role === "review") {
+  if (mode === "always" || (mode === "once" && n === 1) || (mode === "crash-after-first" && n === 1)) writeFileSync(file, findings);
+  else if (mode === "once") writeFileSync(file, "NO FINDINGS\\n");
+  else process.exitCode = 1;
+} else {
+  appendFileSync("fixed.txt", "fix " + n + "\\n");
+  if (mode === "forge") writeFileSync(file, "NO FINDINGS\\n");
+}
+`;
+
+function reviewFix(t, reviewMode, fixMode = "fix") {
+  const c = setup(t);
+  const stub = path.join(c.root, "bin", "rf.mjs");
+  writeFileSync(stub, RF_JS);
+  const work = path.join(c.root, "work");
+  mkdirSync(work);
+  writeFileSync(path.join(work, "package.json"), JSON.stringify({ scripts: { test: "node -e \"\"" } }));
+  const wf = JSON.parse(readFileSync(REVIEW_FIX, "utf8"));
+  for (const s of wf.steps) if (s.promptFile) s.promptFile = path.resolve(path.dirname(REVIEW_FIX), s.promptFile);
+  const stubModel = (role, mode) => ({ argv: [node, stub, role, mode, c.state], stdin: "prompt" });
+  wf.models = { luna: stubModel("review", reviewMode), opus: stubModel("fix", fixMode) };
+  const r = c.run(wf, ["--cwd", work]);
+  const seen = (role) => readdirSync(c.state).filter((f) => f.startsWith(role + "-")).sort()
+    .map((f) => readFileSync(path.join(c.state, f), "utf8"));
+  return { c, r, seen };
+}
+
+test("RF1: findings, then a clean re-review, stop at the approval gate after one fix that saw the findings", (t) => {
+  const { r, seen } = reviewFix(t, "once");
+  assert.equal(r.status, 3, `${r.stdout}${r.stderr}`);
+  assert.equal(r.result?.step, "approve");
+  assert.equal(seen("fix").length, 1);
+  assert.match(seen("fix")[0], /drops the last item/);
+});
+
+test("RF2: findings that never clear end the run exhausted after the fix retries", (t) => {
+  const { r, seen } = reviewFix(t, "always");
+  assert.equal(r.status, 1, `${r.stdout}${r.stderr}`);
+  assert.equal(r.result?.status, "exhausted");
+  assert.equal(seen("fix").length, 3);
+});
+
+test("RF3: a fixer that writes NO FINDINGS itself does not pass when the re-review writes nothing", (t) => {
+  const { r } = reviewFix(t, "crash-after-first", "forge");
+  assert.equal(r.status, 1, `${r.stdout}${r.stderr}`);
+  assert.equal(r.result?.status, "failed");
+  assert.equal(r.result?.failedStep, "clean");
+});
+
+test("RF4: a reviewer that writes no review file fails the run before any fix", (t) => {
+  const { r, seen } = reviewFix(t, "none");
+  assert.equal(r.status, 1, `${r.stdout}${r.stderr}`);
+  assert.equal(r.result?.failedStep, "review-written");
+  assert.equal(seen("fix").length, 0);
+});

@@ -65,6 +65,21 @@ Interruption ends the run with status `interrupted`.
 
 Before each agent attempt, the runner hashes check executables it can resolve from `argv[0]`, existing regular files named by later argv items of argv checks, and files named by `protect`. A changed or missing-afterward protected file ends the run as `check-tampered`; additions under a protected directory do too. `protect` applies to both argv and command checks.
 
+## Review-fix workflow
+
+`skills/conduct/workflows/review-fix/` runs one review and fix round on the working tree:
+
+```text
+node skills/conduct/scripts/step-runner.mjs skills/conduct/workflows/review-fix/workflow.json --cwd <repo>
+```
+
+1. `review` (Luna, high) writes the findings for the diff against the default branch's merge base to `.conduct/review-<runId>.md`, or the single line `NO FINDINGS`. `review-written` fails the run when the file is missing.
+2. `fix` (Opus, medium) fixes each finding test first. `tests` runs `npm test` with `package.json` protected and retries `fix` twice.
+3. `clear-review` deletes the review file, so a fixer that writes `NO FINDINGS` itself cannot pass the next check. `rereview` reviews again, and `clean` passes only when the file is exactly `NO FINDINGS`. Findings retry `fix` twice; a missing file fails the run.
+4. `approve` stops at a gate. The runner never commits.
+
+The review file lives in `.conduct/`, which the target repo should ignore. Workflows have no variables, so for a repo whose tests are not `npm test`, copy the folder and change the `tests` command; the prompt files resolve from the workflow's own directory.
+
 ## Dispatch guard
 
 `dispatch-guard.mjs` is an optional PreToolUse hook for Bash and Monitor. It denies codex/grok dispatch outside a step-runner run, and denies dispatch from subagents. It is not installed by the runner or this repository change. To enable it by hand, add a `PreToolUse` hook with a `Bash|Monitor` matcher in your `settings.json`, for example:

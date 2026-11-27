@@ -206,7 +206,7 @@ const positional = (args, valueOpts = []) => {
   return out;
 };
 
-function stripPrefixes(words) {
+export function stripPrefixes(words) {
   let w = [...words];
   for (let changed = true; changed && w.length;) {
     changed = false;
